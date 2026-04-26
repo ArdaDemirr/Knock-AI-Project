@@ -1,0 +1,33 @@
+# --- Virtual Environments ---
+# This hides your local libraries so they don't get pushed to GitHub
+venv/
+.venv/
+env/
+ENV/
+bin/
+lib/
+include/
+Scripts/
+
+# --- Secrets ---
+# NEVER push your API keys (Gemini, DB passwords) to GitHub
+.env
+
+# --- Python Junk ---
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# --- IDEs & Editors ---
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- LangGraph / Chainlit / Logs ---
+.chainlit/
+chainlit.md
+*.log
+
+pyvenv.cfg
