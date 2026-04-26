@@ -1,0 +1,862 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>KNOCK — Design Your Door</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Special+Elite&family=Courier+Prime:ital,wght@0,400;0,700;1,400&family=IM+Fell+English:ital@0;1&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --amber: #c8902a;
+        --amber-dim: #7a5518;
+        --amber-glow: #e8a832;
+        --paper: #f0e8d0;
+        --paper-dark: #c4b48a;
+        --ink: #1a1410;
+        --ink-mid: #2e261e;
+        --ink-light: #4a3c2e;
+        --red-burn: #8b2020;
+        --fade: #6b5a3e;
+      }
+
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        background: #0a0806;
+        color: var(--paper);
+        font-family: "Courier Prime", monospace;
+        min-height: 100vh;
+        overflow-x: hidden;
+        cursor: crosshair;
+      }
+
+      /* Film grain overlay */
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='1'/%3E%3C/svg%3E");
+        opacity: 0.04;
+        pointer-events: none;
+        z-index: 1000;
+        animation: grain 0.15s steps(1) infinite;
+      }
+
+      @keyframes grain {
+        0% {
+          transform: translate(0, 0);
+        }
+        10% {
+          transform: translate(-2%, -3%);
+        }
+        20% {
+          transform: translate(3%, 2%);
+        }
+        30% {
+          transform: translate(-1%, 4%);
+        }
+        40% {
+          transform: translate(2%, -2%);
+        }
+        50% {
+          transform: translate(-3%, 1%);
+        }
+        60% {
+          transform: translate(1%, 3%);
+        }
+        70% {
+          transform: translate(-2%, -1%);
+        }
+        80% {
+          transform: translate(3%, -3%);
+        }
+        90% {
+          transform: translate(-1%, 2%);
+        }
+        100% {
+          transform: translate(2%, 1%);
+        }
+      }
+
+      /* Vignette */
+      body::after {
+        content: "";
+        position: fixed;
+        inset: 0;
+        background: radial-gradient(
+          ellipse at center,
+          transparent 40%,
+          rgba(0, 0, 0, 0.85) 100%
+        );
+        pointer-events: none;
+        z-index: 999;
+      }
+
+      /* ——— LAYOUT ——— */
+      .wrapper {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 40px 32px;
+        position: relative;
+        z-index: 10;
+        min-height: 100vh;
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        gap: 40px;
+      }
+
+      /* ——— MASTHEAD ——— */
+      .masthead {
+        border-top: 3px double var(--amber-dim);
+        border-bottom: 1px solid var(--amber-dim);
+        padding: 20px 0 16px;
+        text-align: center;
+        position: relative;
+      }
+
+      .masthead::before,
+      .masthead::after {
+        content: "◆";
+        position: absolute;
+        top: 50%;
+        transform: translateY(-50%);
+        color: var(--amber-dim);
+        font-size: 10px;
+      }
+      .masthead::before {
+        left: 0;
+      }
+      .masthead::after {
+        right: 0;
+      }
+
+      .masthead-date {
+        font-family: "Courier Prime", monospace;
+        font-size: 11px;
+        letter-spacing: 0.25em;
+        color: var(--fade);
+        text-transform: uppercase;
+        margin-bottom: 12px;
+      }
+
+      .masthead-title {
+        font-family: "Special Elite", cursive;
+        font-size: clamp(42px, 7vw, 82px);
+        letter-spacing: -0.01em;
+        color: var(--paper);
+        line-height: 0.9;
+        text-shadow: 2px 2px 0 rgba(0, 0, 0, 0.8);
+      }
+
+      .masthead-subtitle {
+        font-family: "IM Fell English", serif;
+        font-style: italic;
+        font-size: 15px;
+        color: var(--paper-dark);
+        margin-top: 10px;
+        letter-spacing: 0.05em;
+      }
+
+      .masthead-dylan {
+        font-family: "Courier Prime", monospace;
+        font-size: 11px;
+        color: var(--amber-dim);
+        letter-spacing: 0.2em;
+        margin-top: 8px;
+        text-transform: uppercase;
+      }
+
+      /* ——— MAIN STAGE ——— */
+      .stage {
+        display: grid;
+        grid-template-columns: 1fr 380px;
+        gap: 48px;
+        align-items: start;
+      }
+
+      /* ——— LEFT: TEXT COLUMN ——— */
+      .text-column {
+        display: flex;
+        flex-direction: column;
+        gap: 28px;
+      }
+
+      .section-label {
+        font-family: "Courier Prime", monospace;
+        font-size: 9px;
+        letter-spacing: 0.4em;
+        text-transform: uppercase;
+        color: var(--amber-dim);
+        border-bottom: 1px solid var(--ink-light);
+        padding-bottom: 6px;
+        margin-bottom: 10px;
+      }
+
+      .memory-block {
+        opacity: 0;
+        transition: opacity 1.2s ease;
+      }
+      .memory-block.visible {
+        opacity: 1;
+      }
+
+      #internal-memory {
+        font-family: "IM Fell English", serif;
+        font-size: 18px;
+        line-height: 1.7;
+        color: var(--paper);
+        font-style: italic;
+        border-left: 2px solid var(--amber-dim);
+        padding-left: 20px;
+      }
+
+      #dylan-trigger {
+        font-family: "Special Elite", cursive;
+        font-size: 22px;
+        color: var(--amber-glow);
+        line-height: 1.4;
+      }
+
+      #emotional-undertow {
+        font-family: "Courier Prime", monospace;
+        font-size: 13px;
+        line-height: 1.8;
+        color: var(--paper-dark);
+        letter-spacing: 0.02em;
+      }
+
+      /* Annotation box — historian voice */
+      .annotation-box {
+        background: rgba(200, 144, 42, 0.06);
+        border: 1px solid var(--amber-dim);
+        border-left: 3px solid var(--amber);
+        padding: 16px 20px;
+        opacity: 0;
+        transition: opacity 2s ease 0.5s;
+      }
+      .annotation-box.visible {
+        opacity: 1;
+      }
+
+      #annotation {
+        font-family: "Courier Prime", monospace;
+        font-size: 12px;
+        line-height: 1.9;
+        color: var(--paper-dark);
+      }
+
+      #dylan-connection {
+        font-family: "IM Fell English", serif;
+        font-style: italic;
+        font-size: 13px;
+        color: var(--amber);
+        margin-top: 10px;
+      }
+
+      /* ——— RIGHT: POLAROID COLUMN ——— */
+      .polaroid-column {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 24px;
+      }
+
+      .polaroid-frame {
+        background: #1a1410;
+        padding: 14px 14px 48px;
+        width: 100%;
+        max-width: 360px;
+        transform: rotate(-1.2deg);
+        box-shadow:
+          6px 8px 30px rgba(0, 0, 0, 0.8),
+          -2px -2px 10px rgba(0, 0, 0, 0.5);
+        position: relative;
+        opacity: 0;
+        transition: opacity 0s;
+      }
+
+      .polaroid-frame.developing {
+        animation: polaroid-develop 8s ease-out forwards;
+      }
+
+      @keyframes polaroid-develop {
+        0% {
+          filter: invert(1) brightness(0) contrast(0);
+          opacity: 0;
+        }
+        10% {
+          filter: invert(1) brightness(0.6) contrast(0.8) saturate(0);
+          opacity: 0.5;
+        }
+        30% {
+          filter: invert(1) brightness(1.2) contrast(1) saturate(0) sepia(0.3);
+          opacity: 0.8;
+        }
+        50% {
+          filter: invert(0.5) brightness(1.5) contrast(1.2) saturate(0)
+            sepia(0.5);
+          opacity: 1;
+        }
+        100% {
+          filter: invert(0) brightness(0.9) contrast(1.1) saturate(0) sepia(0.2)
+            grayscale(1);
+          opacity: 1;
+        }
+      }
+
+      .polaroid-image {
+        width: 100%;
+        aspect-ratio: 1;
+        object-fit: cover;
+        display: block;
+        filter: grayscale(1);
+      }
+
+      .polaroid-caption {
+        position: absolute;
+        bottom: 10px;
+        left: 0;
+        right: 0;
+        text-align: center;
+        font-family: "Special Elite", cursive;
+        font-size: 11px;
+        color: #3a2e22;
+        letter-spacing: 0.1em;
+      }
+
+      /* Cycle counter on polaroid */
+      .cycle-badge {
+        position: absolute;
+        top: -10px;
+        right: -10px;
+        width: 32px;
+        height: 32px;
+        background: var(--red-burn);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: "Courier Prime", monospace;
+        font-size: 11px;
+        font-weight: 700;
+        color: var(--paper);
+        border: 1px solid #6b1515;
+      }
+
+      /* Speaking indicator */
+      .speaking-indicator {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        opacity: 0;
+        transition: opacity 0.5s;
+      }
+      .speaking-indicator.active {
+        opacity: 1;
+      }
+
+      .speak-bars {
+        display: flex;
+        gap: 3px;
+        align-items: flex-end;
+        height: 20px;
+      }
+
+      .speak-bar {
+        width: 3px;
+        background: var(--amber);
+        border-radius: 2px;
+        animation: speak-pulse 0.8s ease-in-out infinite alternate;
+      }
+      .speak-bar:nth-child(1) {
+        height: 6px;
+        animation-delay: 0s;
+      }
+      .speak-bar:nth-child(2) {
+        height: 14px;
+        animation-delay: 0.15s;
+      }
+      .speak-bar:nth-child(3) {
+        height: 10px;
+        animation-delay: 0.3s;
+      }
+      .speak-bar:nth-child(4) {
+        height: 18px;
+        animation-delay: 0.1s;
+      }
+      .speak-bar:nth-child(5) {
+        height: 8px;
+        animation-delay: 0.25s;
+      }
+
+      @keyframes speak-pulse {
+        from {
+          opacity: 0.3;
+          transform: scaleY(0.4);
+        }
+        to {
+          opacity: 1;
+          transform: scaleY(1);
+        }
+      }
+
+      .speak-label {
+        font-family: "Courier Prime", monospace;
+        font-size: 10px;
+        letter-spacing: 0.3em;
+        color: var(--amber-dim);
+        text-transform: uppercase;
+      }
+
+      /* ——— SPOKEN THOUGHT — the big one ——— */
+      .spoken-thought-container {
+        grid-column: 1 / -1;
+        border-top: 1px solid var(--ink-light);
+        padding-top: 32px;
+        opacity: 0;
+        transition: opacity 1.5s ease;
+      }
+      .spoken-thought-container.visible {
+        opacity: 1;
+      }
+
+      #spoken-thought {
+        font-family: "Special Elite", cursive;
+        font-size: clamp(20px, 3vw, 32px);
+        line-height: 1.65;
+        color: var(--paper);
+        text-align: center;
+        max-width: 860px;
+        margin: 0 auto;
+        text-shadow: 0 0 40px rgba(200, 144, 42, 0.2);
+        min-height: 120px;
+      }
+
+      /* Typewriter effect */
+      .typewriter::after {
+        content: "|";
+        color: var(--amber);
+        animation: blink 1s step-end infinite;
+      }
+      @keyframes blink {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0;
+        }
+      }
+
+      /* ——— START SCREEN ——— */
+      #start-screen {
+        position: fixed;
+        inset: 0;
+        background: #0a0806;
+        z-index: 500;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 40px;
+        transition: opacity 1.5s ease;
+      }
+
+      #start-screen.fade-out {
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      .start-epigraph {
+        font-family: "IM Fell English", serif;
+        font-style: italic;
+        font-size: 20px;
+        color: var(--paper-dark);
+        text-align: center;
+        max-width: 560px;
+        line-height: 1.8;
+      }
+
+      .start-epigraph em {
+        color: var(--amber);
+        font-style: normal;
+      }
+
+      .start-instructions {
+        font-family: "Courier Prime", monospace;
+        font-size: 11px;
+        letter-spacing: 0.4em;
+        color: var(--fade);
+        text-transform: uppercase;
+      }
+
+      .knock-button {
+        font-family: "Special Elite", cursive;
+        font-size: 48px;
+        color: var(--paper);
+        background: none;
+        border: 2px solid var(--paper-dark);
+        padding: 20px 60px;
+        cursor: pointer;
+        letter-spacing: 0.2em;
+        transition: all 0.3s ease;
+        position: relative;
+        overflow: hidden;
+      }
+
+      .knock-button::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: var(--amber-dim);
+        transform: scaleX(0);
+        transform-origin: left;
+        transition: transform 0.4s ease;
+        z-index: -1;
+      }
+
+      .knock-button:hover {
+        color: var(--paper);
+        border-color: var(--amber);
+        letter-spacing: 0.35em;
+      }
+      .knock-button:hover::before {
+        transform: scaleX(1);
+      }
+
+      .knock-button:active {
+        transform: scale(0.97);
+      }
+
+      /* ——— STATUS BAR ——— */
+      .status-bar {
+        border-top: 1px solid var(--ink-light);
+        padding-top: 16px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+
+      #status-text {
+        font-family: "Courier Prime", monospace;
+        font-size: 10px;
+        letter-spacing: 0.3em;
+        color: var(--fade);
+        text-transform: uppercase;
+      }
+
+      #cycle-counter {
+        font-family: "Courier Prime", monospace;
+        font-size: 10px;
+        letter-spacing: 0.2em;
+        color: var(--amber-dim);
+      }
+
+      /* ——— RESPONSIVE ——— */
+      @media (max-width: 768px) {
+        .stage {
+          grid-template-columns: 1fr;
+        }
+        .polaroid-column {
+          order: -1;
+        }
+        .masthead-title {
+          font-size: 48px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <!-- START SCREEN -->
+    <div id="start-screen">
+      <div
+        class="masthead-date"
+        style="
+          text-align: center;
+          font-size: 10px;
+          letter-spacing: 0.4em;
+          color: #6b5a3e;
+          text-transform: uppercase;
+        "
+      >
+        Nashville, Tennessee — November 1973
+      </div>
+      <p class="start-epigraph">
+        "Mama, take this badge off of me<br />
+        I can't use it anymore<br /><br />
+        <em>It's getting dark, too dark to see</em><br />
+        I feel I'm knockin' on heaven's door"
+      </p>
+      <p class="start-instructions">
+        A Vietnam War veteran. Four voices. An era dissolving into static.
+      </p>
+      <button class="knock-button" id="knock-btn">KNOCK</button>
+      <p class="start-instructions" style="font-size: 9px; color: #3a2e22">
+        — enter when ready —
+      </p>
+    </div>
+
+    <!-- MAIN INSTALLATION -->
+    <div class="wrapper">
+      <!-- MASTHEAD -->
+      <header class="masthead">
+        <div class="masthead-date">
+          Vol. I — No. 1 &nbsp;&nbsp;·&nbsp;&nbsp; Nashville, Tennessee
+          &nbsp;&nbsp;·&nbsp;&nbsp; November 1973
+        </div>
+        <h1 class="masthead-title">K N O C K</h1>
+        <p class="masthead-subtitle">
+          A living memory installation in six movements
+        </p>
+        <p class="masthead-dylan">
+          Bob Dylan · Knockin' on Heaven's Door · 1973
+        </p>
+      </header>
+
+      <!-- STAGE -->
+      <main>
+        <!-- SPOKEN THOUGHT — full width, above everything -->
+        <div class="spoken-thought-container" id="spoken-container">
+          <div
+            class="section-label"
+            style="
+              text-align: center;
+              border: none;
+              padding: 0;
+              margin-bottom: 20px;
+            "
+          >
+            — the veteran speaks —
+          </div>
+          <p id="spoken-thought" class="typewriter"></p>
+        </div>
+
+        <div style="height: 48px"></div>
+
+        <!-- TWO COLUMN LAYOUT -->
+        <div class="stage">
+          <!-- LEFT COLUMN -->
+          <div class="text-column">
+            <!-- Internal Memory -->
+            <div class="memory-block" id="block-memory">
+              <div class="section-label">The memory surface</div>
+              <p id="internal-memory">—</p>
+            </div>
+
+            <!-- Dylan trigger -->
+            <div class="memory-block" id="block-trigger">
+              <div class="section-label">What opened it</div>
+              <p id="dylan-trigger">—</p>
+            </div>
+
+            <!-- Emotional undertow -->
+            <div class="memory-block" id="block-undertow">
+              <div class="section-label">What lies beneath</div>
+              <p id="emotional-undertow">—</p>
+            </div>
+
+            <!-- Historian annotation -->
+            <div class="annotation-box" id="annotation-box">
+              <div class="section-label" style="border-color: var(--amber-dim)">
+                Historical context · 1973
+              </div>
+              <p id="annotation">—</p>
+              <p id="dylan-connection"></p>
+            </div>
+          </div>
+
+          <!-- RIGHT COLUMN: POLAROID + SPEAKING INDICATOR -->
+          <div class="polaroid-column">
+            <div class="speaking-indicator" id="speaking-indicator">
+              <div class="speak-bars">
+                <div class="speak-bar"></div>
+                <div class="speak-bar"></div>
+                <div class="speak-bar"></div>
+                <div class="speak-bar"></div>
+                <div class="speak-bar"></div>
+              </div>
+              <span class="speak-label">Speaking</span>
+            </div>
+
+            <div class="polaroid-frame" id="polaroid">
+              <div class="cycle-badge" id="cycle-badge">0</div>
+              <img
+                class="polaroid-image"
+                id="polaroid-img"
+                src=""
+                alt="Memory image developing..."
+              />
+              <div class="polaroid-caption" id="polaroid-caption">
+                Vietnam · 1973
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+
+      <!-- STATUS BAR -->
+      <footer class="status-bar">
+        <span id="status-text">Waiting...</span>
+        <span id="cycle-counter">Memory 0 of ∞</span>
+      </footer>
+    </div>
+
+    <script>
+      const ws = new WebSocket("ws://127.0.0.1:8000/ws");
+      let currentCycle = 0;
+      let typewriterTimer = null;
+
+      ws.onopen = () => {
+        document.getElementById("status-text").textContent =
+          "Connected · Radio signal found";
+      };
+
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+
+        if (data.action === "update_text") {
+          currentCycle = data.cycle;
+          document.getElementById("cycle-counter").textContent =
+            `Memory ${data.cycle} of ∞`;
+          document.getElementById("cycle-badge").textContent = data.cycle;
+
+          // Fade out first
+          const blocks = document.querySelectorAll(
+            ".memory-block, .annotation-box, #spoken-container",
+          );
+          blocks.forEach((b) => b.classList.remove("visible"));
+
+          setTimeout(() => {
+            // Internal memory
+            document.getElementById("internal-memory").textContent =
+              data.internal_memory || "—";
+            document.getElementById("block-memory").classList.add("visible");
+
+            setTimeout(() => {
+              // Dylan trigger
+              document.getElementById("dylan-trigger").textContent =
+                '"' + (data.dylan_trigger || "") + '"';
+              document.getElementById("block-trigger").classList.add("visible");
+            }, 600);
+
+            setTimeout(() => {
+              // Emotional undertow
+              document.getElementById("emotional-undertow").textContent =
+                data.emotional_undertow || "—";
+              document
+                .getElementById("block-undertow")
+                .classList.add("visible");
+            }, 1200);
+
+            setTimeout(() => {
+              // Annotation
+              document.getElementById("annotation").textContent =
+                data.annotation || "—";
+              document.getElementById("dylan-connection").textContent =
+                data.dylan_connection || "";
+              document
+                .getElementById("annotation-box")
+                .classList.add("visible");
+            }, 2000);
+          }, 800);
+
+          // Speaking indicator
+          document.getElementById("speaking-indicator").classList.add("active");
+          document.getElementById("status-text").textContent =
+            "Memory surfacing · Cycle " + data.cycle;
+
+          // Typewrite the spoken thought
+          setTimeout(() => {
+            typewriteText(data.spoken_thought || "...", "spoken-thought", 55);
+            document
+              .getElementById("spoken-container")
+              .classList.add("visible");
+          }, 400);
+        }
+
+        if (data.action === "develop_polaroid") {
+          const polaroid = document.getElementById("polaroid");
+          const img = document.getElementById("polaroid-img");
+
+          // Stop previous animation
+          polaroid.classList.remove("developing");
+          img.src = "";
+
+          void polaroid.offsetWidth; // Force reflow to restart animation
+
+          img.src = data.url;
+          polaroid.style.opacity = "1";
+          polaroid.classList.add("developing");
+
+          const year = 1969 + (currentCycle % 5);
+          document.getElementById("polaroid-caption").textContent =
+            `Vietnam Era · ${year}`;
+
+          document.getElementById("status-text").textContent =
+            "Image developing · Negative to positive";
+        }
+
+        if (data.action === "hide_polaroid") {
+          const polaroid = document.getElementById("polaroid");
+          polaroid.style.transition = "opacity 3s ease";
+          polaroid.style.opacity = "0";
+          polaroid.classList.remove("developing");
+
+          document
+            .getElementById("speaking-indicator")
+            .classList.remove("active");
+          document.getElementById("status-text").textContent =
+            "Memory fading · Preparing next cycle...";
+
+          setTimeout(() => {
+            polaroid.style.transition = "";
+          }, 3500);
+        }
+      };
+
+      function typewriteText(text, elementId, charsPerSecond = 40) {
+        if (typewriterTimer) clearInterval(typewriterTimer);
+        const el = document.getElementById(elementId);
+        el.classList.add("typewriter");
+        el.textContent = "";
+        let i = 0;
+        const interval = 1000 / charsPerSecond;
+
+        typewriterTimer = setInterval(() => {
+          if (i < text.length) {
+            el.textContent += text[i];
+            i++;
+            // Pause on ellipsis for dramatic effect
+            if (text[i - 1] === "." && text[i] === "." && text[i + 1] === ".") {
+              clearInterval(typewriterTimer);
+              setTimeout(() => {
+                typewriterTimer = setInterval(arguments.callee, interval);
+              }, 600);
+            }
+          } else {
+            clearInterval(typewriterTimer);
+            el.classList.remove("typewriter");
+          }
+        }, interval);
+      }
+
+      // KNOCK button
+      document.getElementById("knock-btn").addEventListener("click", () => {
+        const startScreen = document.getElementById("start-screen");
+        startScreen.classList.add("fade-out");
+        setTimeout(() => (startScreen.style.display = "none"), 1600);
+        ws.send("KNOCK");
+        document.getElementById("status-text").textContent =
+          "Signal sent · Vietnam War ended April 1975 · The veteran does not know this yet";
+      });
+    </script>
+  </body>
+</html>
