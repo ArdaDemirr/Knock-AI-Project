@@ -572,6 +572,43 @@
           font-size: 48px;
         }
       }
+      /* ——— SYNTHESIS OVERLAY ——— */
+      #synthesis-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(10, 8, 6, 0.94);
+        z-index: 300;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: 60px 40px;
+        opacity: 0;
+        transition: opacity 1.5s ease;
+      }
+
+      .synthesis-inner {
+        max-width: 800px;
+        text-align: center;
+      }
+
+      #synthesis-text {
+        font-family: "Special Elite", cursive;
+        font-size: clamp(17px, 2.4vw, 26px);
+        line-height: 1.85;
+        color: var(--amber-glow);
+        text-shadow: 0 0 60px rgba(200, 144, 42, 0.25);
+        margin-top: 20px;
+      }
+
+      .synthesis-dismiss {
+        margin-top: 36px;
+        font-family: "Courier Prime", monospace;
+        font-size: 10px;
+        letter-spacing: 0.4em;
+        color: var(--fade);
+        text-transform: uppercase;
+      }
+
     </style>
   </head>
   <body>
@@ -702,6 +739,19 @@
         </div>
       </main>
 
+      <!-- SYNTHESIS OVERLAY -->
+      <div id="synthesis-overlay">
+        <div class="synthesis-inner">
+          <div class="section-label" style="text-align:center; border:none; padding:0;">
+            — four voices &nbsp;·&nbsp; one door —
+          </div>
+          <p id="synthesis-text"></p>
+          <div class="synthesis-dismiss">
+            disappearing in <span id="synthesis-countdown">14</span>s
+          </div>
+        </div>
+      </div>
+
       <!-- STATUS BAR -->
       <footer class="status-bar">
         <span id="status-text">Waiting...</span>
@@ -712,7 +762,23 @@
     <script>
       const ws = new WebSocket("ws://127.0.0.1:8000/ws");
       let currentCycle = 0;
+      let currentVoiceId = "soldier";
       let typewriterTimer = null;
+      let synthesisCountdownTimer = null;
+
+      const VOICE_LABELS = {
+        dylan:     "— subject: alias  ·  durango, mexico —",
+        protester: "— subject: the idealist  ·  berkeley —",
+        soldier:   "— subject: the veteran  ·  youngstown —",
+        mother:    "— subject: the silent  ·  akron —",
+      };
+
+      const VOICE_CAPTIONS = {
+        dylan:     "Durango, Mexico · 1973",
+        protester: "Berkeley, California · 1973",
+        soldier:   "Youngstown, Ohio · 1973",
+        mother:    "Akron, Ohio · 1973",
+      };
 
       ws.onopen = () => {
         document.getElementById("status-text").textContent =
@@ -724,9 +790,13 @@
 
         if (data.action === "update_text") {
           currentCycle = data.cycle;
+          currentVoiceId = data.voice_id || "soldier";
           document.getElementById("cycle-counter").textContent =
             `Memory ${data.cycle} of ∞`;
           document.getElementById("cycle-badge").textContent = data.cycle;
+          // Update the speaker label dynamically
+          document.querySelector("#spoken-container .section-label").textContent =
+            VOICE_LABELS[data.voice_id] || "— the witness speaks —";
 
           // Fade out first
           const blocks = document.querySelectorAll(
@@ -796,12 +866,36 @@
           polaroid.style.opacity = "1";
           polaroid.classList.add("developing");
 
-          const year = 1969 + (currentCycle % 5);
           document.getElementById("polaroid-caption").textContent =
-            `Vietnam Era · ${year}`;
+            VOICE_CAPTIONS[currentVoiceId] || "Vietnam Era · 1973";
 
           document.getElementById("status-text").textContent =
             "Image developing · Negative to positive";
+        }
+
+        if (data.action === "show_synthesis") {
+          if (synthesisCountdownTimer) clearInterval(synthesisCountdownTimer);
+          const overlay = document.getElementById("synthesis-overlay");
+          document.getElementById("synthesis-text").textContent = "";
+          overlay.style.display = "flex";
+          // Small delay then fade in so display:flex is committed first
+          requestAnimationFrame(() => requestAnimationFrame(() => {
+            overlay.style.opacity = "1";
+          }));
+          typewriteText(data.text, "synthesis-text", 30);
+          let remaining = 14;
+          document.getElementById("synthesis-countdown").textContent = remaining;
+          synthesisCountdownTimer = setInterval(() => {
+            remaining--;
+            document.getElementById("synthesis-countdown").textContent = remaining;
+            if (remaining <= 0) {
+              clearInterval(synthesisCountdownTimer);
+              overlay.style.opacity = "0";
+              setTimeout(() => { overlay.style.display = "none"; }, 1600);
+            }
+          }, 1000);
+          document.getElementById("status-text").textContent =
+            "Four voices · One door · October 1973";
         }
 
         if (data.action === "hide_polaroid") {

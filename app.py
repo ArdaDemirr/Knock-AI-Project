@@ -4,6 +4,10 @@ import time
 import asyncio
 import requests
 import io
+import urllib.parse
+import random
+import shutil
+import glob
 import edge_tts
 import pygame
 from PIL import Image
@@ -12,80 +16,166 @@ from fastapi import FastAPI, WebSocket
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from groq import Groq
+from huggingface_hub import InferenceClient
 
 load_dotenv()
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 HF_API_TOKEN = os.getenv("HF_API_TOKEN")
+SUNO_API_KEY = os.getenv("SUNO_API_KEY")
 
 if not GROQ_API_KEY or not HF_API_TOKEN:
-    raise ValueError("Missing API Keys in .env file")
+    raise ValueError("Missing API Keys in .env file (GROQ_API_KEY and HF_API_TOKEN required)")
 
 groq_client = Groq(api_key=GROQ_API_KEY)
-
-HF_HEADERS = {"Authorization": f"Bearer {HF_API_TOKEN}"}
-IMAGE_API_URL = "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell"
-MUSIC_API_URL = "https://api-inference.huggingface.co/models/cvssp/audioldm-m"
+hf_client = InferenceClient(token=HF_API_TOKEN)
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 pygame.mixer.init(frequency=44100)
+
 os.makedirs("static", exist_ok=True)
+os.makedirs("static/assets", exist_ok=True)
+os.makedirs("static/music_cache", exist_ok=True)
+
+# ============================================================
+# MUSIC CACHE CONFIG
+# ============================================================
+
+MUSIC_CACHE_DIR = "static/music_cache"
+
+# 8 thematic variants — each generation picks the next one in sequence
+SUNO_MUSIC_PROMPTS = [
+    # 0 — classic Dylan fingerpicked
+    ("slow acoustic guitar fingerpicked, blues harmonica, 1973 americana folk, "
+     "melancholic minor key, sparse cinematic, instrumental no vocals, "
+     "dusty tape warmth, knockin on heavens door dylan style, documentary score, mournful, quiet"),
+    # 1 — slide guitar elegy
+    ("open-tuned slide guitar, weeping harmonica, 1973 southern blues, "
+     "slow progression, analog tape hiss, delta grief, no vocals, "
+     "documentary score, vietnam era, sparse and lonely"),
+    # 2 — late night piano
+    ("solo piano nocturne, 1970s americana, sparse left hand, slow tempo meditative, "
+     "single melody line, influenced by late night radio 1973, "
+     "no vocals, instrumental, cinematic grief"),
+    # 3 — banjo elegy
+    ("clawhammer banjo, mountain folk, 1973 appalachian, mournful minor, "
+     "sparse drums, acoustic bass, pat garrett billy the kid soundtrack style, "
+     "no vocals, instrumental documentary"),
+    # 4 — solo harmonica
+    ("solo harmonica minor blues, 1973 late night, no other instruments, "
+     "dusty room tone, long reverb, sustained bends, "
+     "inspired by dylan basement tapes, somber, meditative, no vocals"),
+    # 5 — nashville session
+    ("acoustic guitar and pedal steel, 1973 nashville session, "
+     "slow country elegy, minor key, inspired by knockin on heavens door, "
+     "sparse drums brush and snare, instrumental no vocals, cinematic"),
+    # 6 — dobro and strings
+    ("dobro resonator guitar, sparse string quartet, 1973 americana, "
+     "cinematic documentary score, slow tempo, melancholic, "
+     "pat garrett soundtrack style, no vocals, vietnam era grief"),
+    # 7 — upright bass duo
+    ("upright bass and acoustic guitar duo, 1973 folk jazz, "
+     "slow walking tempo, minor mode, sparse documentary, "
+     "late night radio sound, dylan and the band style, no vocals"),
+]
+_suno_prompt_idx = 0
 
 # ============================================================
 # FOUR VOICES OF OCTOBER 1973
-# The installation cycles through four people who hear Dylan's
-# song on the same day, in four different rooms in America.
-# None know each other. All are at a threshold.
 # ============================================================
 
-# --- 2. THE DOCUMENTARY VOICES ---
 VOICES = [
     {
         "id": "dylan",
         "name": "Subject: Alias",
         "description": "Durango, Mexico. 16mm handheld footage. He is hiding inside a Western.",
-        "voice_role": "robert", # Gravelly, mercurial
+        "voice_role": "robert",
         "focus": "The death of folk sincerity and the birth of the '70s outlaw."
     },
     {
         "id": "protester",
         "name": "Subject: The Idealist",
         "description": "Berkeley. Grainy interview in a dark room. The 'Movement' is ending.",
-        "voice_role": "sophia", # Intelligent, sharp
+        "voice_role": "sophia",
         "focus": "Watergate, the '72 landslide, and the realization that the revolution failed."
     },
     {
         "id": "soldier",
         "name": "Subject: The Veteran",
         "description": "Youngstown. Dim diner lighting. He is the physical cost of the era.",
-        "voice_role": "troy", # Weary, grounded
+        "voice_role": "troy",
         "focus": "The silence of 1973 and the 'badge' that no longer has a war."
     },
     {
         "id": "mother",
         "name": "Subject: The Silent",
         "description": "Akron. Kitchen table interview. The weight of 58,220 names.",
-        "voice_role": "martha", # Mature, heavy
+        "voice_role": "martha",
         "focus": "The personal grief that political slogans ignored."
     }
 ]
 
 voice_histories = {v["id"]: [] for v in VOICES}
 
-HISTORICAL_ANCHORS = [
-    "January 27, 1973: The Paris Peace Accords are signed. 58,220 Americans are already dead.",
-    "May 4, 1970: National Guard kills four students at Kent State. Nixon calls protesters 'bums'.",
-    "Operation Rolling Thunder dropped more bombs on Vietnam than all of World War II combined.",
-    "The draft lottery, 1969: your birthday drawn from a drum determined if you lived or died.",
-    "My Lai Massacre, March 1968: 500 unarmed civilians killed. Lt. Calley served three years of house arrest.",
-    "Dylan at Newport 1965: went electric. Pete Seeger allegedly tried to cut the power cables.",
-    "March 29, 1973: the last American combat troops leave Vietnam. The MIAs do not come home.",
-    "The Vietnam Veterans Memorial will not be built until 1982. The country needs nine years to agree the dead deserve a wall.",
-    "Dylan's Nobel Lecture, 2016: he quotes Melville, Homer, Woody Guthrie. Never mentions the movement that claimed him.",
-    "1971: Vietnam Veterans Against the War throw their medals over the White House fence. Some are missing their ribbons.",
-]
+# ============================================================
+# PER-VOICE HISTORICAL ANCHOR POOLS  (8 facts × 4 voices)
+# Each voice draws randomly without repetition; resets when exhausted.
+# ============================================================
 
+HISTORICAL_ANCHORS: dict[str, list[str]] = {
+    "soldier": [
+        "Draft lottery 1969: number 47 guaranteed induction. 366 capsules drawn from a drum — numbers below 195 were nearly certain to go.",
+        "March 29, 1973: the last U.S. combat troops left Vietnam. No ceremony. No welcome home crowds. Nobody said anything.",
+        "Operation Dewey Canyon III, April 1971: Vietnam veterans threw their medals over a fence at the U.S. Capitol. Some wept. Some did not.",
+        "Agent Orange was sprayed across 4.5 million acres of Vietnamese land. Soldiers handling it were told it was harmless.",
+        "Unemployment among Vietnam veterans in 1973 ran at 12% — double the national average.",
+        "By 1973, the VA estimated 700,000 Vietnam veterans were experiencing severe psychological trauma. PTSD was not a diagnosis yet.",
+        "The last 591 American POWs were returned from Hanoi on March 29, 1973. The men who stayed in had no ceremony and no crowd.",
+        "By 1973, more Vietnam veterans had died by suicide after returning home than had died in combat.",
+    ],
+    "protester": [
+        "May Day 1971: 12,000 people arrested in Washington D.C. — the largest mass arrest in U.S. history. Most charges were later dismissed.",
+        "Nixon won 49 states in November 1972, carrying 60.7% of the popular vote. McGovern carried only Massachusetts and D.C.",
+        "Vietnam Moratorium, October 15, 1969: an estimated 2 million Americans participated — the largest single-day protest in U.S. history.",
+        "Kent State, May 4, 1970: four students killed, nine wounded. The National Guard fired for thirteen seconds.",
+        "SDS collapsed in 1969, fracturing into the Weathermen and scores of local chapters. The movement had already begun eating itself.",
+        "The FBI's COINTELPRO program infiltrated every major antiwar organization. The Church Committee would expose this in 1975.",
+        "The War Powers Resolution was passed over Nixon's veto on November 7, 1973 — the week after this October.",
+        "Dylan refused to appear at the March on Washington in August 1963, though Baez sang and Peter, Paul and Mary performed.",
+    ],
+    "dylan": [
+        "Pat Garrett and Billy the Kid began filming in January 1973 in Durango, Mexico. Peckinpah went $1 million over budget.",
+        "Newport Folk Festival, July 25, 1965: Dylan played three electric songs. Pete Seeger reportedly tried to cut the sound cables.",
+        "Dylan's motorcycle accident, July 29, 1966: he disappeared for eighteen months. He later said he was simply hiding.",
+        "Blonde on Blonde, 1966: the first double album in rock history, recorded in Nashville in under three weeks of session time.",
+        "Woody Guthrie died October 3, 1967. Dylan had visited him in Greystone Hospital regularly since January 1961.",
+        "The Basement Tapes, summer 1967: recorded in a pink house in Woodstock with The Band. Not officially released until 1975.",
+        "John Wesley Harding, December 1967: recorded in three Nashville sessions. Biblical, spare, and produced without overdubs.",
+        "Dylan's Nobel Prize lecture, 2016: forty-five minutes on Buddy Holly, Moby Dick, and the Odyssey. The Vietnam War was not mentioned.",
+    ],
+    "mother": [
+        "Quang Tri Province, March 1972: North Vietnamese forces overran the province. James Callahan was killed March 30, 1972.",
+        "58,220 Americans were killed in Vietnam. The youngest was 16. The oldest was 62. Each had a mother.",
+        "The casualty notification system: a uniformed officer arrived at the front door. No phone call. No warning. Just the knock.",
+        "Gold Star Mothers of America, founded 1928: by 1973, its Vietnam-era chapter was the largest in the organization's history.",
+        "The Vietnam Veterans Memorial would not be built until November 1982. Dorothy Callahan will be 60 years old when it opens.",
+        "The folded flag given at military funerals follows a 13-fold procedure. The 13th fold: to honor God. There is no fold for grief.",
+        "By 1973, the Akron, Ohio metropolitan area had lost 47 sons in Vietnam. Their names are on a plaque most people walk past.",
+        "The form letter signed by the President: an estimated 3,000 families received nearly identical letters. The signature was a stamp.",
+    ],
+}
+
+# Per-voice shuffled draw pools — refilled when exhausted
+_voice_anchor_pool: dict[str, list[str]] = {vid: [] for vid in HISTORICAL_ANCHORS}
+
+
+def get_next_anchor(voice_id: str) -> str:
+    """Draw a random unused fact for this voice. Resets pool when all facts used."""
+    pool = _voice_anchor_pool[voice_id]
+    if not pool:
+        pool[:] = random.sample(HISTORICAL_ANCHORS[voice_id], len(HISTORICAL_ANCHORS[voice_id]))
+    return pool.pop()
 
 # ============================================================
 # GROQ ENGINE
@@ -93,9 +183,9 @@ HISTORICAL_ANCHORS = [
 
 def get_groq_completion(messages, system_prompt, temperature=0.88, max_tokens=1500):
     models = [
-        "llama-3.3-70b-versatile", 
-        "meta-llama/llama-4-scout-17b-16e-instruct",
-        "llama-3.1-8b-instant"
+        "llama-3.3-70b-versatile",
+        "llama-3.1-8b-instant",
+        "meta-llama/llama-4-scout-17b-16e-instruct"
     ]
     for model in models:
         try:
@@ -114,9 +204,8 @@ def get_groq_completion(messages, system_prompt, temperature=0.88, max_tokens=15
             continue
     return None, None
 
-
 # ============================================================
-# VOICE SYSTEM PROMPTS — each one a dense character brief
+# VOICE SYSTEM PROMPTS
 # ============================================================
 
 SOLDIER_SYSTEM = """
@@ -293,33 +382,17 @@ VOICE_SYSTEMS = {
     "mother": MOTHER_SYSTEM,
 }
 
-
 # ============================================================
-# SYNTHESIS — after one full round of 4 voices
+# SYNTHESIS + HISTORICAL FACT
 # ============================================================
 
 def generate_synthesis(all_memories):
-    system = """You are a poet-historian. You have just watched four Americans — 
-a returning soldier, an antiwar protester, Bob Dylan, and a Gold Star mother —
-hear the same song on the same October day in 1973.
-None of them know each other. They are in a diner in Ohio, an apartment in Berkeley, 
-a film trailer in Mexico, a grocery store in Akron.
-
-Write a meditation — not a summary. 4-6 sentences. Dense.
-Use the specific details from what they said. Use real names: Quang Tri Province, Kent State, 
-Da Nang, Durango, Tommy Kowalski, Mary Ann Vecchio, James Callahan.
-Use the number 58,220.
+    system = """You are a poet-historian. You have just watched four Americans hear the same song on the same October day in 1973.
+Write a meditation — not a summary. 4-6 sentences. Dense. Use real names.
 What is the door they are all knocking on?
-What does it mean that Dylan wrote this song for a dying fictional sheriff and it found all of them?
-
-No comfort that is not earned. No conclusions that are not paid for.
-
 RESPOND ONLY in valid JSON: {"synthesis": "Your 4-6 sentence meditation."}
 """
-    summary = "\n\n".join([
-        f"[{vid}]: {mem.get('spoken_aloud', '')}"
-        for vid, mem in all_memories.items()
-    ])
+    summary = "\n\n".join([f"[{vid}]: {mem.get('spoken_aloud', '')}" for vid, mem in all_memories.items()])
     result, _ = get_groq_completion(
         [{"role": "user", "content": f"Here is what each voice said:\n\n{summary}\n\nNow write the synthesis."}],
         system, temperature=0.82, max_tokens=500
@@ -328,11 +401,8 @@ RESPOND ONLY in valid JSON: {"synthesis": "Your 4-6 sentence meditation."}
         return result.get("synthesis", "")
     return "Four people. One song. One October. 58,220 names. The door does not open from this side."
 
-
 def generate_historical_fact(voice_id, spoken, anchor):
-    system = """You are a historian. One sentence only. A real, specific, documented fact —
-with date, name, or number — that contextualizes what this person just said.
-Not empathy. Not analysis. A fact that lands like a stone in still water.
+    system = """You are a historian. One sentence only. A real, specific, documented fact.
 RESPOND ONLY in valid JSON: {"fact": "One sentence."}"""
     result, _ = get_groq_completion(
         [{"role": "user", "content": f"Voice: {voice_id}\nThey said: \"{spoken}\"\nAvailable anchor: {anchor}\nGive the one historical fact."}],
@@ -342,130 +412,283 @@ RESPOND ONLY in valid JSON: {"fact": "One sentence."}"""
         return result.get("fact", anchor)
     return anchor
 
-
 # ============================================================
-# CLOUD WORKERS
+# MUSIC SYSTEM — Suno Cache + Background Generation
 # ============================================================
 
-def hf_query_with_retry(api_url, payload, max_retries=3):
-    for i in range(max_retries):
-        r = requests.post(api_url, headers=HF_HEADERS, json=payload)
-        if r.status_code == 200:
-            return r.content
-        elif r.status_code == 503:
-            wait = r.json().get("estimated_time", 20)
-            print(f"   [HF] Loading... {int(wait)}s")
-            time.sleep(wait)
-        else:
-            print(f"   [HF] Error {r.status_code}: {r.text}")
-            break
+def get_cached_tracks():
+    """Return list of locally saved Suno tracks, newest first."""
+    tracks = glob.glob(f"{MUSIC_CACHE_DIR}/*.mp3")
+    tracks.sort(key=os.path.getmtime, reverse=True)
+    return tracks
+
+def play_track(path):
+    """Load and loop a track in pygame with fade-in."""
+    try:
+        pygame.mixer.music.load(path)
+        pygame.mixer.music.play(loops=-1, fade_ms=4000)
+        print(f"   -> Music: Now playing {os.path.basename(path)}")
+        return True
+    except Exception as e:
+        print(f"   ! Music playback error: {e}")
+        return False
+
+# Suno statuses that carry audio data (FIRST_SUCCESS = first clip ready, SUCCESS = all done)
+_SUNO_AUDIO_STATUSES = {"SUCCESS", "FIRST_SUCCESS", "completed", "success", "first_success"}
+_SUNO_FAIL_STATUSES  = {"FAILED", "failed", "error", "ERROR"}
+
+
+def _extract_suno_audio_url(record: dict) -> str | None:
+    """
+    Try every known key path to find the audio URL inside a Suno poll record.
+    Returns the URL string, or None if nothing was found.
+    Logs the full record for debugging when extraction fails.
+    """
+    response_obj = record.get("response", {})
+
+    # Candidate track lists — try both shapes the API has been observed to return
+    candidate_lists = [
+        response_obj.get("data"),       # data.response.data[]
+        response_obj.get("sunoData"),   # data.response.sunoData[]
+        record.get("data"),             # data.data[] (flat shape)
+    ]
+
+    # Keys the first track object might carry the audio URL under
+    audio_keys = ["audio_url", "audioUrl", "stream_audio_url", "streamAudioUrl",
+                  "clipAudioUrl", "clip_audio_url", "url"]
+
+    for track_list in candidate_lists:
+        if not isinstance(track_list, list) or len(track_list) == 0:
+            continue
+        first = track_list[0]
+        if not isinstance(first, dict):
+            continue
+        for key in audio_keys:
+            val = first.get(key)
+            if val and isinstance(val, str) and val.startswith("http"):
+                print(f"   -> Suno: audio_url found under key '{key}': {val[:80]}...")
+                return val
+
+    # Nothing found — log the full record so the dev can add the right key
+    print(f"   ! Suno: Could not extract audio_url. Full record dump:")
+    try:
+        print(json.dumps(record, indent=2)[:2000])
+    except Exception:
+        print(str(record)[:2000])
     return None
 
 
+async def generate_suno_track_background():
+    """
+    Submit to sunoapi.org, poll until FIRST_SUCCESS or SUCCESS,
+    save to cache, crossfade pygame into new track.
+
+    Status flow: PENDING → TEXT_SUCCESS → FIRST_SUCCESS → SUCCESS
+    Audio is downloadable from FIRST_SUCCESS onwards.
+    """
+    global _suno_prompt_idx
+    _current_suno_prompt = SUNO_MUSIC_PROMPTS[_suno_prompt_idx % len(SUNO_MUSIC_PROMPTS)]
+    _suno_prompt_idx += 1
+    print(f"   -> Suno: Using music prompt variant #{_suno_prompt_idx} of {len(SUNO_MUSIC_PROMPTS)}")
+
+    if not SUNO_API_KEY:
+        print("   ! SUNO_API_KEY missing in .env — skipping music generation.")
+        return
+
+    print("   -> Suno: Submitting music generation request...")
+
+    headers = {
+        "Authorization": f"Bearer {SUNO_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    # ---- STEP 1: Submit ----
+    try:
+        res = await asyncio.to_thread(
+            requests.post,
+            "https://api.sunoapi.org/api/v1/generate",
+            json={
+                "customMode": False,
+                "instrumental": True,
+                "model": "V3_5",
+                "prompt": _current_suno_prompt,
+                "callBackUrl": "https://httpbin.org/post"  # dummy — we poll manually
+
+            },
+            headers=headers,
+            timeout=30
+        )
+
+        print(f"   -> Suno submit: HTTP {res.status_code} | {res.text[:400]}")
+
+        if res.status_code != 200:
+            print(f"   ! Suno rejected request (status {res.status_code})")
+            return
+
+        submit_data = res.json()
+
+        # sunoapi.org wraps taskId inside data{} on some responses, or at top level
+        task_id = None
+        inner = submit_data.get("data")
+        if isinstance(inner, dict):
+            task_id = inner.get("taskId") or inner.get("task_id")
+        if not task_id:
+            task_id = submit_data.get("taskId") or submit_data.get("task_id")
+        if not task_id:
+            print(f"   ! Suno gave no taskId. Full response: {json.dumps(submit_data)[:800]}")
+            return
+
+        print(f"   -> Suno: Task submitted (ID: {task_id}). Polling every 5s (max 5 min)...")
+
+    except Exception as e:
+        print(f"   ! Suno submit error: {e}")
+        return
+
+    # ---- STEP 2: Poll for FIRST_SUCCESS or SUCCESS ----
+    audio_url = None
+    for attempt in range(60):   # 60 × 5s = 5 minutes max
+        await asyncio.sleep(5)
+        try:
+            status_res = await asyncio.to_thread(
+                requests.get,
+                f"https://api.sunoapi.org/api/v1/generate/record-info?taskId={task_id}",
+                headers=headers,
+                timeout=20
+            )
+
+            if status_res.status_code != 200:
+                print(f"   -> Suno poll #{attempt+1}: HTTP {status_res.status_code} — retrying")
+                continue
+
+            poll_data = status_res.json()
+
+            record = poll_data.get("data", {})
+            if not isinstance(record, dict):
+                print(f"   -> Suno poll #{attempt+1}: unexpected data shape — {str(poll_data)[:120]}")
+                continue
+
+            status = record.get("status", "UNKNOWN")
+            print(f"   -> Suno poll #{attempt+1}: status={status}")
+
+            if status in _SUNO_AUDIO_STATUSES:
+                print(f"   -> Suno FULL RECORD: {json.dumps(record)}")  # DEBUG: verify audio_url key path
+                audio_url = _extract_suno_audio_url(record)
+
+                if audio_url:
+                    print(f"   -> Suno: Audio ready at status '{status}'. Breaking poll loop.")
+                    break
+                else:
+                    # URL not in response yet even though status looks ready
+                    # (can happen with FIRST_SUCCESS before CDN propagation)
+                    if status == "FIRST_SUCCESS":
+                        print("   -> Suno: FIRST_SUCCESS but no URL yet — will retry in 5s")
+                        continue
+                    # For full SUCCESS with no URL, something is truly wrong
+                    print("   ! Suno: status SUCCESS but could not extract audio_url — aborting.")
+                    return
+
+            elif status in _SUNO_FAIL_STATUSES:
+                print(f"   ! Suno generation failed (status={status}): {json.dumps(record)[:400]}")
+                return
+
+            else:
+                # Normal in-progress states: PENDING, TEXT_SUCCESS
+                pass  # just loop
+
+        except Exception as e:
+            print(f"   ! Suno poll error on attempt {attempt+1}: {e}")
+            continue
+
+    if not audio_url:
+        print("   ! Suno timed out after 5 minutes — no audio_url received.")
+        return
+
+    # ---- STEP 3: Download and cache ----
+    print(f"   -> Suno: Downloading track from {audio_url[:80]}...")
+    try:
+        dl_response = await asyncio.to_thread(
+            lambda: requests.get(audio_url, timeout=120, stream=False)
+        )
+        if dl_response.status_code != 200:
+            print(f"   ! Suno download failed: HTTP {dl_response.status_code}")
+            return
+
+        audio_bytes = dl_response.content
+        if len(audio_bytes) < 10_000:
+            # Sanity check — a real MP3 should be at least ~10 KB
+            print(f"   ! Suno: Downloaded file suspiciously small ({len(audio_bytes)} bytes). Aborting.")
+            return
+
+        filename = f"{MUSIC_CACHE_DIR}/suno_{int(time.time())}.mp3"
+        with open(filename, "wb") as f:
+            f.write(audio_bytes)
+        print(f"   -> Suno: Saved {len(audio_bytes)//1024} KB to {filename}")
+
+        # ---- STEP 4: Crossfade into new track ----
+        # Fade out whatever is playing, wait for fade to complete, then start new track
+        if pygame.mixer.music.get_busy():
+            pygame.mixer.music.fadeout(3000)
+            await asyncio.sleep(3.5)  # let fade complete
+        play_track(filename)
+
+    except Exception as e:
+        print(f"   ! Suno download/save error: {e}")
+
+# ============================================================
+# IMAGE GENERATION
+# ============================================================
+
 def save_polaroid(img):
-    """Crops and saves the image to the static folder."""
     w, h = img.size
     m = min(w, h)
     img.crop(((w - m) // 2, (h - m) // 2, (w + m) // 2, (h + m) // 2)).save("static/current_memory.png")
 
 def generate_image(prompt, cycle_num):
-    import urllib.parse
-    import random
-
-    # 16mm Documentary Style Overrides
+    print(f"   -> Image Engine: Generating for cycle {cycle_num}...")
     styles = ["handheld shake", "extreme close up", "grainy profile", "chiaroscuro shadow"]
     style = styles[cycle_num % len(styles)]
-    
-    # We use SD 1.5 because it is the most stable 'Free' endpoint on HF
-    HF_MODEL = "runwayml/stable-diffusion-v1-5" 
-    
-    full_prompt = f"1973 16mm film still, {style}, dirty lens, grainy documentary photography, {prompt}"
-    print(f"   -> Image Engine: Attempting {HF_MODEL}...")
-
-    # STAGE 1: Primary Hugging Face Request
+    full_prompt = (
+        f"black and white, Kodak Tri-X grain, 16mm film still, {style}, "
+        f"dirty lens, 1973 documentary, {prompt}"
+    )
+    safe_prompt = urllib.parse.quote(full_prompt)
+    url = (
+        f"https://image.pollinations.ai/prompt/{safe_prompt}"
+        f"?width=512&height=512&nologo=true&seed={random.randint(0,99999)}"
+    )
     try:
-        hf_payload = {
-            "inputs": full_prompt,
-            "parameters": {"negative_prompt": "color, modern, digital, hd", "wait_for_model": True}
-        }
-        # Increased timeout to allow for HF 'Cold Starts'
-        r = requests.post(f"https://api-inference.huggingface.co/models/{HF_MODEL}", 
-                          headers=HF_HEADERS, json=hf_payload, timeout=25)
-        
+        time.sleep(random.uniform(1.0, 3.0))  # avoid 429
+        r = requests.get(url, timeout=60)
         if r.status_code == 200:
             img = Image.open(io.BytesIO(r.content))
             save_polaroid(img)
+            print("   -> Image Engine: Pollinations success.")
             return True
-        print(f"      [HF] Status {r.status_code}. Moving to Fallback...")
+        print(f"      [Pollinations] HTTP {r.status_code}")
     except Exception as e:
-        print(f"      [HF] Error: {e}")
-
-    # STAGE 2: Pollinations Fallback (Increased Timeout)
-    print(f"   -> Image Engine: Falling back to Pollinations (30s Timeout)...")
-    safe_prompt = urllib.parse.quote(full_prompt)
-    # Using a random seed forces Pollinations to bypass its own cache for a unique result
-    url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=512&height=512&nologo=true&seed={random.randint(0,99999)}"
-    
-    try:
-        r = requests.get(url, timeout=30) # Increased from 5s to 30s
-        if r.status_code == 200:
-            img = Image.open(io.BytesIO(r.content))
-            save_polaroid(img)
-            return True
-    except Exception as e:
-        print(f"      [Pollinations] Failed or timed out: {e}")
-
+        print(f"      [Pollinations] Error: {e}")
     return False
 
-
-def generate_music(prompt):
-    import urllib.parse
-    
-    # 1. PRIMARY: Hugging Face MusicGen (Direct API)
-    print(f"   -> Cloud Music: Trying Hugging Face Inference API...")
-    try:
-        payload = {"inputs": f"1973 lo-fi documentary background, {prompt}"}
-        hf_response = requests.post(
-            "https://api-inference.huggingface.co/models/facebook/musicgen-small",
-            headers=HF_HEADERS,
-            json=payload,
-            timeout=45
-        )
-        if hf_response.status_code == 200:
-            with open("static/echo.wav", "wb") as f:
-                f.write(hf_response.content)
-            return True
-    except Exception as e:
-        print(f"      [HF Music] API Failure: {e}")
-
-    # 2. SECONDARY: Pollinations (Strict 5s Timeout)
-    print(f"   -> Cloud Music: Falling back to Pollinations (5s Timeout)...")
-    full_prompt = f"1973 analog tape hiss, {prompt}, sparse melancholic acoustic guitar"
-    safe_prompt = urllib.parse.quote(full_prompt)
-    url = f"https://gen.pollinations.ai/audio/{safe_prompt}"
-    try:
-        response = requests.get(url, timeout=45)
-        if response.status_code == 200:
-            with open("static/echo.wav", "wb") as f:
-                f.write(response.content)
-            return True
-    except Exception as e:
-        print(f"      [Pollinations Music] Error: {e}")
-
-    print("   ! All Music Generation Failed. Continuing in silence.")
-    return False
-
+# ============================================================
+# TTS — Groq Orpheus → Edge-TTS fallback
+# ============================================================
 
 async def speak(text, voice_id):
-    """
-    Primary: Groq Orpheus (Cinematic)
-    Fallback: Edge-TTS (Unlimited Free)
-    """
+    import re
     voice_map_groq = {"soldier": "troy", "protester": "diana", "dylan": "daniel", "mother": "hannah"}
-    voice_map_edge = {"soldier": "en-US-AndrewNeural", "protester": "en-US-AvaNeural", "dylan": "en-US-BrianNeural", "mother": "en-US-EmmaNeural"}
-    
+    voice_map_edge = {
+        "soldier": "en-US-AndrewNeural",
+        "protester": "en-US-AvaNeural",
+        "dylan": "en-US-BrianNeural",
+        "mother": "en-US-EmmaNeural"
+    }
+
+    if not text or not re.search('[a-zA-Z0-9]', text):
+        print("   ! Speech text empty or punctuation-only. Using placeholder.")
+        text = "I don't have the words."
+
     try:
-        print(f"   -> Groq TTS: Using '{voice_map_groq.get(voice_id, 'troy')}' for {voice_id}...")
+        print(f"   -> Groq TTS: Voice '{voice_map_groq.get(voice_id, 'troy')}'...")
         response = groq_client.audio.speech.create(
             model="canopylabs/orpheus-v1-english",
             voice=voice_map_groq.get(voice_id, "troy"),
@@ -476,15 +699,19 @@ async def speak(text, voice_id):
             f.write(response.read())
         return "static/voice.wav"
     except Exception as e:
-        print(f"   ! Groq TTS Limit Reached or Error. Falling back to Edge-TTS...")
-        try:
-            communicate = edge_tts.Communicate(text, voice_map_edge.get(voice_id, "en-US-AndrewNeural"), rate="-10%")
-            await communicate.save("static/voice.mp3")
-            return "static/voice.mp3"
-        except Exception as ef:
-            print(f"   !! All TTS Failed: {ef}")
-            return None
+        print(f"   ! Groq TTS Error: {e}. Falling back to Edge-TTS...")
 
+    try:
+        communicate = edge_tts.Communicate(
+            text,
+            voice_map_edge.get(voice_id, "en-US-AndrewNeural"),
+            rate="-10%"
+        )
+        await communicate.save("static/voice.mp3")
+        return "static/voice.mp3"
+    except Exception as ef:
+        print(f"   !! All TTS failed: {ef}")
+        return None
 
 # ============================================================
 # MASTER LOOP
@@ -492,14 +719,27 @@ async def speak(text, voice_id):
 
 async def run_installation_loop(websocket):
     cycle = 0
-    anchor_idx = 0
     round_memories = {}
+    music_started = False
+
+    # ---- MUSIC STARTUP ----
+    # On first run: play cached track instantly if available,
+    # always generate a fresh one in background.
+    cached = get_cached_tracks()
+    if cached:
+        print(f"   -> Music: Found {len(cached)} cached track(s). Playing latest immediately.")
+        play_track(cached[0])
+        music_started = True
+    else:
+        print("   -> Music: No cache yet. Generating first track in background (will take ~2-3 min)...")
+
+    # Always kick off a fresh generation on startup
+    asyncio.create_task(generate_suno_track_background())
 
     while True:
         voice = VOICES[cycle % len(VOICES)]
         vid = voice["id"]
-        anchor = HISTORICAL_ANCHORS[anchor_idx % len(HISTORICAL_ANCHORS)]
-        anchor_idx += 1
+        anchor = get_next_anchor(vid)
 
         print(f"\n{'='*55}\nCYCLE {cycle+1} — {voice['name'].upper()}\n{'='*55}")
 
@@ -520,13 +760,19 @@ async def run_installation_loop(websocket):
                 f"The song is still playing. October 1973.\n"
                 f"Historical anchor this cycle: {anchor}\n"
                 + ("This is your first memory tonight. Begin." if not history
-                   else f"You have already spoken {len(history)//2} times tonight. The song is almost over. Go deeper. The thing you have been avoiding — go there.")
+                   else f"You have already spoken {len(history)//2} times tonight. "
+                        f"The song is almost over. Go deeper. The thing you have been avoiding — go there.")
             )
         }
+
         result, model = get_groq_completion(history[-6:] + [user_msg], VOICE_SYSTEMS[vid])
 
         if not result:
-            result = {"spoken_aloud": "I don't have the words...", "image_prompt": "1973 empty room", "music_prompt": "silence and tape hiss"}
+            result = {
+                "spoken_aloud": "I don't have the words...",
+                "image_prompt": "1973 empty room, single light bulb, wooden chair",
+                "music_prompt": "silence and tape hiss and the sound of someone leaving"
+            }
 
         voice_histories[vid].append(user_msg)
         voice_histories[vid].append({"role": "assistant", "content": json.dumps(result)})
@@ -536,32 +782,34 @@ async def run_installation_loop(websocket):
         spoken = result.get("spoken_aloud", "...")
         round_memories[vid] = result
 
+        # Stagger historical fact call to avoid Groq rate limit collision
+        await asyncio.sleep(1.5)
         hist_fact = generate_historical_fact(vid, spoken, anchor)
 
-        # Pick the richest secondary text field per voice
-        secondary_map = {
-            "soldier":   result.get("the_question", ""),
-            "protester": result.get("the_dylan_complication", ""),
-            "dylan":     result.get("fear_about_the_song", ""),
-            "mother":    result.get("what_she_wants_to_ask_god", ""),
-        }
         memory_map = {
             "soldier":   result.get("the_memory", ""),
             "protester": result.get("the_political_thought", ""),
             "dylan":     result.get("why_he_wrote_it", ""),
             "mother":    result.get("the_ordinary_memory", ""),
         }
-
         trigger_map = {
             "soldier":   result.get("what_dylan_line_hit_him", ""),
             "protester": result.get("what_the_movement_got_wrong", ""),
             "dylan":     result.get("vietnam_oblique", ""),
             "mother":    result.get("the_flag", ""),
         }
+        secondary_map = {
+            "soldier":   result.get("the_question", ""),
+            "protester": result.get("the_dylan_complication", ""),
+            "dylan":     result.get("fear_about_the_song", ""),
+            "mother":    result.get("what_she_wants_to_ask_god", ""),
+        }
 
         await websocket.send_json({
             "action": "update_text",
             "cycle": cycle + 1,
+            "voice_id": vid,
+            "voice_location": voice["description"],
             "internal_memory": memory_map.get(vid, ""),
             "dylan_trigger": trigger_map.get(vid, ""),
             "emotional_undertow": secondary_map.get(vid, ""),
@@ -571,27 +819,32 @@ async def run_installation_loop(websocket):
         })
 
         print("   -> [Pipeline] Starting Concurrent Processing...")
-        
-        # 1. Fire Music Loading into the background
-        async def fetch_and_play_music():
-            success = await asyncio.to_thread(generate_music, result.get("music_prompt", "melancholic ambient"))
-            if success and os.path.exists("static/echo.wav"):
-                try:
-                    pygame.mixer.music.load("static/echo.wav")
-                    pygame.mixer.music.play(loops=-1, fade_ms=5000)
-                except Exception as e:
-                    pass
-        asyncio.create_task(fetch_and_play_music())
 
-        # 2. Fire Image Loading into the background
-        async def fetch_image_and_update():
-            success = await asyncio.to_thread(generate_image, result.get("image_prompt", "1973 America"), cycle)
-            
-            # If both cloud engines fail, the system copies fallback.png to current_memory.png
-            # This maintains the 'Lost Signal' thematic fail-safe.
+        # ---------------------------------------------------------
+        # PIPELINE 1: MUSIC — every 8 cycles generate a fresh track
+        # The current track keeps looping. New track crossfades in
+        # when Suno finishes (background, ~2-3 min).
+        # ---------------------------------------------------------
+        if cycle > 0 and cycle % 8 == 0:
+            print("   -> Music: Scheduling fresh Suno generation in background...")
+            asyncio.create_task(generate_suno_track_background())
+
+        # ---------------------------------------------------------
+        # PIPELINE 2: IMAGE GENERATION (delayed 2.5s so voice starts first)
+        # ---------------------------------------------------------
+        image_prompt = result.get("image_prompt", "1973 America, black and white")
+
+        # Default-arg capture freezes image_prompt and cycle at their current
+        # values — prevents closure bugs when the outer loop advances before
+        # this create_task fires.
+        async def fetch_image_and_update(
+            _prompt=image_prompt, _cycle=cycle
+        ):
+            await asyncio.sleep(2.5)
+            success = await asyncio.to_thread(generate_image, _prompt, _cycle)
+
             if not success:
-                print("   !! All Image Engines Failed. Activating Fail-safe...")
-                import shutil
+                print("   !! Image engine failed. Using fallback.")
                 if os.path.exists("static/fallback.png"):
                     shutil.copy("static/fallback.png", "static/current_memory.png")
                     success = True
@@ -602,48 +855,47 @@ async def run_installation_loop(websocket):
                     "action": "develop_polaroid",
                     "url": f"/static/current_memory.png?t={ts}",
                 })
+
         asyncio.create_task(fetch_image_and_update())
 
-        # 3. Fire Voice Loading and get EXACT length
-        async def fetch_and_play_voice():
-            audio_file = await speak(spoken, vid)
-            word_count = len(spoken.split())
-            duration = max(3.0, word_count * 0.4 + 1.0) # Mathematical text-to-speech fallback estimation
-            
+        # ---------------------------------------------------------
+        # PIPELINE 3: VOICE — Groq Orpheus TTS → Edge-TTS fallback
+        # ---------------------------------------------------------
+        # Capture spoken and vid by value so the closure is stable
+        # even though we await it immediately (defensive, and good practice).
+        async def fetch_and_play_voice(
+            _spoken=spoken, _vid=vid
+        ):
+            audio_file = await speak(_spoken, _vid)
+            word_count = len(_spoken.split())
+            duration = max(3.0, word_count * 0.4 + 1.0)
+
             if audio_file and os.path.exists(audio_file):
                 try:
                     sfx = pygame.mixer.Sound(audio_file)
                     sfx.play()
-                    # Pygame Sound struggles to calculate exact lengths of .mp3 files (Edge-TTS).
-                    # If it returns zero or fails, we use the mathematical fallback.
                     played_dur = sfx.get_length()
                     if played_dur > 1.0:
                         duration = played_dur
                 except Exception as e:
-                    print(f"      [Audio] Voice play err (Pygame cannot handle this mp3 format): {e}")
-                    # Edge-TTS produces MP3s which pygame.Sound hates.
-                    # We can gracefully fallback to using an OS call or rely on length math.
+                    print(f"      [Audio] Pygame playback error: {e}")
             return duration
-            
-        # We AWAIT the voice task here so the loop actually pauses
-        # based on the true length of the generated dialogue.
+
         audio_duration = await fetch_and_play_voice()
 
-        # After full round of 4 voices: synthesis
+        # ---------------------------------------------------------
+        # SYNTHESIS CHECK — every 4 cycles (one full round of voices)
+        # ---------------------------------------------------------
         if (cycle + 1) % 4 == 0 and len(round_memories) >= 4:
             synth = generate_synthesis(round_memories)
             await websocket.send_json({"action": "show_synthesis", "text": synth})
             await asyncio.sleep(14)
             round_memories = {}
 
-        # Wait precisely for the character to finish speaking + 3 seconds of padding
-        # This replaces the hardcoded "sleep(22)" and prevents any overlapping!
+        # Wait for voice to finish + 3s breathing room
         await asyncio.sleep(audio_duration + 3.0)
-        
-        # We REMOVED the hide_polaroid action so the image smoothly stays
-        # on screen until the next cycle creates and develops a new one in place.
-        cycle += 1
 
+        cycle += 1
 
 # ============================================================
 # ROUTES
@@ -653,7 +905,6 @@ async def run_installation_loop(websocket):
 async def get_ui():
     with open("index.html", "r", encoding="utf-8") as f:
         return HTMLResponse(f.read())
-
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -665,7 +916,6 @@ async def websocket_endpoint(websocket: WebSocket):
                 asyncio.create_task(run_installation_loop(websocket))
     except Exception as e:
         print(f"WebSocket closed: {e}")
-
 
 if __name__ == "__main__":
     import uvicorn
