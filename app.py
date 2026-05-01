@@ -566,6 +566,7 @@ async def run_installation_loop(websocket):
                     
                 try:
                     pygame.mixer.music.load(track_path)
+                    pygame.mixer.music.set_volume(0.2) 
                     pygame.mixer.music.play(loops=-1, fade_ms=3000)
                 except Exception as e:
                     print(f"   ! [Audio] Pygame failed to play local file: {e}")
