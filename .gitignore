@@ -9,7 +9,7 @@ lib/
 include/
 Scripts/
 Share/
-static/
+
 
 # --- Secrets ---
 # NEVER push your API keys (Gemini, DB passwords) to GitHub

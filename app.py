@@ -18,11 +18,11 @@ from fastapi.staticfiles import StaticFiles
 from groq import Groq
 from huggingface_hub import InferenceClient
 
+
 load_dotenv()
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 HF_API_TOKEN = os.getenv("HF_API_TOKEN")
-SUNO_API_KEY = os.getenv("SUNO_API_KEY")
 
 if not GROQ_API_KEY or not HF_API_TOKEN:
     raise ValueError("Missing API Keys in .env file (GROQ_API_KEY and HF_API_TOKEN required)")
@@ -36,50 +36,7 @@ pygame.mixer.init(frequency=44100)
 
 os.makedirs("static", exist_ok=True)
 os.makedirs("static/assets", exist_ok=True)
-os.makedirs("static/music_cache", exist_ok=True)
-
-# ============================================================
-# MUSIC CACHE CONFIG
-# ============================================================
-
-MUSIC_CACHE_DIR = "static/music_cache"
-
-# 8 thematic variants — each generation picks the next one in sequence
-SUNO_MUSIC_PROMPTS = [
-    # 0 — classic Dylan fingerpicked
-    ("slow acoustic guitar fingerpicked, blues harmonica, 1973 americana folk, "
-     "melancholic minor key, sparse cinematic, instrumental no vocals, "
-     "dusty tape warmth, knockin on heavens door dylan style, documentary score, mournful, quiet"),
-    # 1 — slide guitar elegy
-    ("open-tuned slide guitar, weeping harmonica, 1973 southern blues, "
-     "slow progression, analog tape hiss, delta grief, no vocals, "
-     "documentary score, vietnam era, sparse and lonely"),
-    # 2 — late night piano
-    ("solo piano nocturne, 1970s americana, sparse left hand, slow tempo meditative, "
-     "single melody line, influenced by late night radio 1973, "
-     "no vocals, instrumental, cinematic grief"),
-    # 3 — banjo elegy
-    ("clawhammer banjo, mountain folk, 1973 appalachian, mournful minor, "
-     "sparse drums, acoustic bass, pat garrett billy the kid soundtrack style, "
-     "no vocals, instrumental documentary"),
-    # 4 — solo harmonica
-    ("solo harmonica minor blues, 1973 late night, no other instruments, "
-     "dusty room tone, long reverb, sustained bends, "
-     "inspired by dylan basement tapes, somber, meditative, no vocals"),
-    # 5 — nashville session
-    ("acoustic guitar and pedal steel, 1973 nashville session, "
-     "slow country elegy, minor key, inspired by knockin on heavens door, "
-     "sparse drums brush and snare, instrumental no vocals, cinematic"),
-    # 6 — dobro and strings
-    ("dobro resonator guitar, sparse string quartet, 1973 americana, "
-     "cinematic documentary score, slow tempo, melancholic, "
-     "pat garrett soundtrack style, no vocals, vietnam era grief"),
-    # 7 — upright bass duo
-    ("upright bass and acoustic guitar duo, 1973 folk jazz, "
-     "slow walking tempo, minor mode, sparse documentary, "
-     "late night radio sound, dylan and the band style, no vocals"),
-]
-_suno_prompt_idx = 0
+os.makedirs("static/score", exist_ok=True) 
 
 # ============================================================
 # FOUR VOICES OF OCTOBER 1973
@@ -413,228 +370,6 @@ RESPOND ONLY in valid JSON: {"fact": "One sentence."}"""
     return anchor
 
 # ============================================================
-# MUSIC SYSTEM — Suno Cache + Background Generation
-# ============================================================
-
-def get_cached_tracks():
-    """Return list of locally saved Suno tracks, newest first."""
-    tracks = glob.glob(f"{MUSIC_CACHE_DIR}/*.mp3")
-    tracks.sort(key=os.path.getmtime, reverse=True)
-    return tracks
-
-def play_track(path):
-    """Load and loop a track in pygame with fade-in."""
-    try:
-        pygame.mixer.music.load(path)
-        pygame.mixer.music.play(loops=-1, fade_ms=4000)
-        print(f"   -> Music: Now playing {os.path.basename(path)}")
-        return True
-    except Exception as e:
-        print(f"   ! Music playback error: {e}")
-        return False
-
-# Suno statuses that carry audio data (FIRST_SUCCESS = first clip ready, SUCCESS = all done)
-_SUNO_AUDIO_STATUSES = {"SUCCESS", "FIRST_SUCCESS", "completed", "success", "first_success"}
-_SUNO_FAIL_STATUSES  = {"FAILED", "failed", "error", "ERROR"}
-
-
-def _extract_suno_audio_url(record: dict) -> str | None:
-    """
-    Try every known key path to find the audio URL inside a Suno poll record.
-    Returns the URL string, or None if nothing was found.
-    Logs the full record for debugging when extraction fails.
-    """
-    response_obj = record.get("response", {})
-
-    # Candidate track lists — try both shapes the API has been observed to return
-    candidate_lists = [
-        response_obj.get("data"),       # data.response.data[]
-        response_obj.get("sunoData"),   # data.response.sunoData[]
-        record.get("data"),             # data.data[] (flat shape)
-    ]
-
-    # Keys the first track object might carry the audio URL under
-    audio_keys = ["audio_url", "audioUrl", "stream_audio_url", "streamAudioUrl",
-                  "clipAudioUrl", "clip_audio_url", "url"]
-
-    for track_list in candidate_lists:
-        if not isinstance(track_list, list) or len(track_list) == 0:
-            continue
-        first = track_list[0]
-        if not isinstance(first, dict):
-            continue
-        for key in audio_keys:
-            val = first.get(key)
-            if val and isinstance(val, str) and val.startswith("http"):
-                print(f"   -> Suno: audio_url found under key '{key}': {val[:80]}...")
-                return val
-
-    # Nothing found — log the full record so the dev can add the right key
-    print(f"   ! Suno: Could not extract audio_url. Full record dump:")
-    try:
-        print(json.dumps(record, indent=2)[:2000])
-    except Exception:
-        print(str(record)[:2000])
-    return None
-
-
-async def generate_suno_track_background():
-    """
-    Submit to sunoapi.org, poll until FIRST_SUCCESS or SUCCESS,
-    save to cache, crossfade pygame into new track.
-
-    Status flow: PENDING → TEXT_SUCCESS → FIRST_SUCCESS → SUCCESS
-    Audio is downloadable from FIRST_SUCCESS onwards.
-    """
-    global _suno_prompt_idx
-    _current_suno_prompt = SUNO_MUSIC_PROMPTS[_suno_prompt_idx % len(SUNO_MUSIC_PROMPTS)]
-    _suno_prompt_idx += 1
-    print(f"   -> Suno: Using music prompt variant #{_suno_prompt_idx} of {len(SUNO_MUSIC_PROMPTS)}")
-
-    if not SUNO_API_KEY:
-        print("   ! SUNO_API_KEY missing in .env — skipping music generation.")
-        return
-
-    print("   -> Suno: Submitting music generation request...")
-
-    headers = {
-        "Authorization": f"Bearer {SUNO_API_KEY}",
-        "Content-Type": "application/json"
-    }
-
-    # ---- STEP 1: Submit ----
-    try:
-        res = await asyncio.to_thread(
-            requests.post,
-            "https://api.sunoapi.org/api/v1/generate",
-            json={
-                "customMode": False,
-                "instrumental": True,
-                "model": "V3_5",
-                "prompt": _current_suno_prompt,
-                "callBackUrl": "https://httpbin.org/post"  # dummy — we poll manually
-
-            },
-            headers=headers,
-            timeout=30
-        )
-
-        print(f"   -> Suno submit: HTTP {res.status_code} | {res.text[:400]}")
-
-        if res.status_code != 200:
-            print(f"   ! Suno rejected request (status {res.status_code})")
-            return
-
-        submit_data = res.json()
-
-        # sunoapi.org wraps taskId inside data{} on some responses, or at top level
-        task_id = None
-        inner = submit_data.get("data")
-        if isinstance(inner, dict):
-            task_id = inner.get("taskId") or inner.get("task_id")
-        if not task_id:
-            task_id = submit_data.get("taskId") or submit_data.get("task_id")
-        if not task_id:
-            print(f"   ! Suno gave no taskId. Full response: {json.dumps(submit_data)[:800]}")
-            return
-
-        print(f"   -> Suno: Task submitted (ID: {task_id}). Polling every 5s (max 5 min)...")
-
-    except Exception as e:
-        print(f"   ! Suno submit error: {e}")
-        return
-
-    # ---- STEP 2: Poll for FIRST_SUCCESS or SUCCESS ----
-    audio_url = None
-    for attempt in range(60):   # 60 × 5s = 5 minutes max
-        await asyncio.sleep(5)
-        try:
-            status_res = await asyncio.to_thread(
-                requests.get,
-                f"https://api.sunoapi.org/api/v1/generate/record-info?taskId={task_id}",
-                headers=headers,
-                timeout=20
-            )
-
-            if status_res.status_code != 200:
-                print(f"   -> Suno poll #{attempt+1}: HTTP {status_res.status_code} — retrying")
-                continue
-
-            poll_data = status_res.json()
-
-            record = poll_data.get("data", {})
-            if not isinstance(record, dict):
-                print(f"   -> Suno poll #{attempt+1}: unexpected data shape — {str(poll_data)[:120]}")
-                continue
-
-            status = record.get("status", "UNKNOWN")
-            print(f"   -> Suno poll #{attempt+1}: status={status}")
-
-            if status in _SUNO_AUDIO_STATUSES:
-                print(f"   -> Suno FULL RECORD: {json.dumps(record)}")  # DEBUG: verify audio_url key path
-                audio_url = _extract_suno_audio_url(record)
-
-                if audio_url:
-                    print(f"   -> Suno: Audio ready at status '{status}'. Breaking poll loop.")
-                    break
-                else:
-                    # URL not in response yet even though status looks ready
-                    # (can happen with FIRST_SUCCESS before CDN propagation)
-                    if status == "FIRST_SUCCESS":
-                        print("   -> Suno: FIRST_SUCCESS but no URL yet — will retry in 5s")
-                        continue
-                    # For full SUCCESS with no URL, something is truly wrong
-                    print("   ! Suno: status SUCCESS but could not extract audio_url — aborting.")
-                    return
-
-            elif status in _SUNO_FAIL_STATUSES:
-                print(f"   ! Suno generation failed (status={status}): {json.dumps(record)[:400]}")
-                return
-
-            else:
-                # Normal in-progress states: PENDING, TEXT_SUCCESS
-                pass  # just loop
-
-        except Exception as e:
-            print(f"   ! Suno poll error on attempt {attempt+1}: {e}")
-            continue
-
-    if not audio_url:
-        print("   ! Suno timed out after 5 minutes — no audio_url received.")
-        return
-
-    # ---- STEP 3: Download and cache ----
-    print(f"   -> Suno: Downloading track from {audio_url[:80]}...")
-    try:
-        dl_response = await asyncio.to_thread(
-            lambda: requests.get(audio_url, timeout=120, stream=False)
-        )
-        if dl_response.status_code != 200:
-            print(f"   ! Suno download failed: HTTP {dl_response.status_code}")
-            return
-
-        audio_bytes = dl_response.content
-        if len(audio_bytes) < 10_000:
-            # Sanity check — a real MP3 should be at least ~10 KB
-            print(f"   ! Suno: Downloaded file suspiciously small ({len(audio_bytes)} bytes). Aborting.")
-            return
-
-        filename = f"{MUSIC_CACHE_DIR}/suno_{int(time.time())}.mp3"
-        with open(filename, "wb") as f:
-            f.write(audio_bytes)
-        print(f"   -> Suno: Saved {len(audio_bytes)//1024} KB to {filename}")
-
-        # ---- STEP 4: Crossfade into new track ----
-        # Fade out whatever is playing, wait for fade to complete, then start new track
-        if pygame.mixer.music.get_busy():
-            pygame.mixer.music.fadeout(3000)
-            await asyncio.sleep(3.5)  # let fade complete
-        play_track(filename)
-
-    except Exception as e:
-        print(f"   ! Suno download/save error: {e}")
-
-# ============================================================
 # IMAGE GENERATION
 # ============================================================
 
@@ -720,21 +455,6 @@ async def speak(text, voice_id):
 async def run_installation_loop(websocket):
     cycle = 0
     round_memories = {}
-    music_started = False
-
-    # ---- MUSIC STARTUP ----
-    # On first run: play cached track instantly if available,
-    # always generate a fresh one in background.
-    cached = get_cached_tracks()
-    if cached:
-        print(f"   -> Music: Found {len(cached)} cached track(s). Playing latest immediately.")
-        play_track(cached[0])
-        music_started = True
-    else:
-        print("   -> Music: No cache yet. Generating first track in background (will take ~2-3 min)...")
-
-    # Always kick off a fresh generation on startup
-    asyncio.create_task(generate_suno_track_background())
 
     while True:
         voice = VOICES[cycle % len(VOICES)]
@@ -821,13 +541,37 @@ async def run_installation_loop(websocket):
         print("   -> [Pipeline] Starting Concurrent Processing...")
 
         # ---------------------------------------------------------
-        # PIPELINE 1: MUSIC — every 8 cycles generate a fresh track
-        # The current track keeps looping. New track crossfades in
-        # when Suno finishes (background, ~2-3 min).
+        # PIPELINE 1: MUSIC (Local Score Crossfader)
         # ---------------------------------------------------------
-        if cycle > 0 and cycle % 8 == 0:
-            print("   -> Music: Scheduling fresh Suno generation in background...")
-            asyncio.create_task(generate_suno_track_background())
+
+        # Only change the track every 4 cycles to keep a continuous score
+        if cycle % 4 == 0:
+            async def crossfade_local_track():
+                score_folder = "static/score"
+                tracks = [f for f in os.listdir(score_folder) if f.endswith(('.mp3', '.wav', '.ogg'))]
+                
+                if not tracks:
+                    print("   ! [Audio] No local tracks found in static/score/. Playing silence.")
+                    return
+                
+                # Pick a random track 
+                selected_track = random.choice(tracks)
+                track_path = os.path.join(score_folder, selected_track)
+                
+                print(f"   -> [Audio] Randomly selected local track: {selected_track}. Crossfading...")
+                
+                if pygame.mixer.music.get_busy():
+                    pygame.mixer.music.fadeout(3000)
+                    await asyncio.sleep(3.5) # Wait for fade to complete
+                    
+                try:
+                    pygame.mixer.music.load(track_path)
+                    pygame.mixer.music.play(loops=-1, fade_ms=3000)
+                except Exception as e:
+                    print(f"   ! [Audio] Pygame failed to play local file: {e}")
+
+            # Fire music swap in the background so it doesn't pause the loop
+            asyncio.create_task(crossfade_local_track())
 
         # ---------------------------------------------------------
         # PIPELINE 2: IMAGE GENERATION (delayed 2.5s so voice starts first)
