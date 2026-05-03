@@ -219,3 +219,17 @@ These anchors are injected into every LLM cycle and shaped by a second model cal
 Built for **CSE 358 Introduction to Artificial Intelligence** — Spring 2025–2026.
 Inspired by Bob Dylan's *Knockin' on Heaven's Door* (1973), written for Sam Peckinpah's *Pat Garrett and Billy the Kid*.
 Featuring Groq LLaMA for real-time documentary intelligence.
+
+## Screenshots
+
+<img width="1901" height="906" alt="knock1" src="https://github.com/user-attachments/assets/ea24a0ab-1fc7-458e-9b07-d9a29aa1bc0d" />
+
+<img width="1897" height="915" alt="knock2" src="https://github.com/user-attachments/assets/97217311-f19d-453a-b944-a59c4b653adb" />
+
+<img width="1897" height="921" alt="knock3" src="https://github.com/user-attachments/assets/65b8b492-bbfc-4e60-918b-e5c43ea7cc51" />
+
+<img width="1901" height="908" alt="knock4" src="https://github.com/user-attachments/assets/dd26e7af-610f-4d72-b6f6-15e7cff16345" />
+
+
+
+
