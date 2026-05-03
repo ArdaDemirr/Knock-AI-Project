@@ -1,104 +1,221 @@
 # KNOCK — The Four Voices of October 1973
 
-### Creative AI Installation · 52nd Anniversary Special Edition
+> *"Mama, take this badge off of me / I can't use it anymore"*
+> — Bob Dylan, Knockin' on Heaven's Door (1973)
 
-> _"I was on the set of Pat Garrett and Billy the Kid in Durango... I wrote a song about a dying sheriff... but it wasn't about him. It was about everything that was ending."_  
-> — Alias (Subject: Bob Dylan)
+**Creative AI Installation · CSE 358 Introduction to Artificial Intelligence**
 
----
-
-## The Installation
-
-**K N O C K** is a living-memory documentary installation. It synchronizes four distinct American consciousnesses who hear Bob Dylan’s _Knockin' on Heaven's Door_ for the first time on the same day in October 1973.
-
-The installation cycles through:
-
-1. **The Soldier:** Michael Reardon, 23 (Youngstown, OH). A veteran of a war the country wants to forget.
-2. **The Protester:** Ruth Abramowitz, 24 (Berkeley, CA). Worn down by a revolution that didn't happen.
-3. **The Subject:** Bob Dylan, 32 (Durango, Mexico). Hiding inside a character while the world calls him a prophet.
-4. **The Mother:** Dorothy Callahan, 51 (Akron, OH). Staring at a soup can in a grocery store, carrying a Gold Star.
+KNOCK is a living-memory documentary installation. It places four distinct American consciousnesses — a Vietnam veteran, a burned-out Berkeley protester, Bob Dylan himself, and a Gold Star mother — in the same October 1973 moment, all hearing *Knockin' on Heaven's Door* for the first time. The installation cycles through each voice continuously, generating psychological memories, synthesized visuals, neural speech, and ambient audio in real time. Every session is unique. No two knocks are the same.
 
 ---
 
-## Modernized "Guerrilla" Tech Stack
+## The Four Voices
 
-This installation is designed to be **resilient**. It uses a multi-layered generative pipeline that automatically falls back to secondary services during API failures or rate limits.
-
-| Layer                | Primary Technology                      | Resilience Fallback                   |
-| :------------------- | :-------------------------------------- | :------------------------------------ |
-| **Intelligence**     | **Groq** (LLaMA 3.1 8B Instant)         | **LLaMA 3.3 70B** / **LLaMA 4 Scout** |
-| **Voice TTS**        | **Groq Orpheus** (Daniel, Hannah, etc.) | **Edge-TTS** (Neural Unlimited)       |
-| **Generative Image** | **Pollinations AI** (60s Timeout)       | **static/fallback.png** (Fail-safe)   |
-| **Ambient Music**    | **Pollinations Audio** (60s Timeout)    | **Silent Mode**                       |
-| **Framework**        | **FastAPI** + **WebSockets**            | **Pygame** Local Mixing               |
+| Voice | Identity | Location | Focus |
+|---|---|---|---|
+| **The Veteran** | Michael Reardon, 23 | Youngstown, OH — a diner | The war the country wants to forget |
+| **The Idealist** | Ruth Abramowitz, 24 | Berkeley, CA — her apartment | A revolution that didn't happen |
+| **The Subject** | Alias (Bob Dylan), 32 | Durango, Mexico — a film set trailer | Hiding inside a Western while the world calls him a prophet |
+| **The Silent** | Dorothy Callahan, 51 | Akron, OH — a grocery store aisle | The weight of 58,220 names |
 
 ---
 
-## Resilient Architecture
+## AI Techniques Used
+
+This project combines **four distinct generative AI technique families** working together in a single real-time pipeline.
+
+### 1. Large Language Model (LLM) — Psychological Memory Generation
+**Technology:** Groq API — LLaMA 3.3 70B / LLaMA 3.1 8B Instant / LLaMA 4 Scout (cascade fallback)
+
+Each voice is powered by a deeply engineered character system prompt containing historical facts, biographical detail, and psychological constraints specific to that person's 1973 experience. On every cycle, the LLM generates a structured JSON memory object containing the character's spoken thought, internal memory, reaction to a specific Dylan lyric, and a prompt for image generation. The model is given conversation history (last 5 exchanges) so each cycle deepens rather than repeats.
+
+A separate **Historian Layer** uses a second LLM call to inject one documented historical fact (drawn from a pool of 32 anchors across the four voices) into each cycle, grounding the fiction in real 1973 data.
+
+A **Synthesis Layer** fires every 4 cycles, prompting the LLM to write a poet-historian meditation connecting all four voices' spoken thoughts into a single unified reflection.
+
+### 2. Neural Text-to-Speech Synthesis (TTS)
+**Technology:** Groq Orpheus v1 (English) → Edge-TTS Neural fallback
+
+Each character has an assigned neural voice persona. The system generates WAV audio from the LLM's spoken output using Groq's Orpheus model. If Groq TTS fails (rate limit or API error), the system falls back instantly to Microsoft Edge-TTS neural voices, each matched to the character's demographic and tone. Speech duration is calculated programmatically to synchronize the installation's pacing — the next cycle does not begin until the voice has finished speaking.
+
+| Character | Groq Orpheus Voice | Edge-TTS Fallback |
+|---|---|---|
+| The Veteran | troy | en-US-AndrewNeural |
+| The Idealist | diana | en-US-AvaNeural |
+| The Subject (Dylan) | daniel | en-US-BrianNeural |
+| The Silent (Mother) | hannah | en-US-EmmaNeural |
+
+### 3. Text-to-Image Diffusion
+**Technology:** Pollinations AI (Stable Diffusion backend) → static fallback image
+
+Each LLM memory cycle produces a cinematic image prompt constrained to a consistent aesthetic: black and white Kodak Tri-X grain, 16mm film still, 1973 documentary style. The image is requested concurrently with TTS generation (non-blocking) using `asyncio.create_task`. A rotating set of cinematographic styles (handheld shake, extreme close-up, chiaroscuro shadow) is applied per cycle to prevent visual repetition. If the image engine times out after 60 seconds, a pre-rendered "Lost Signal" 16mm static frame is displayed to maintain thematic continuity.
+
+### 4. Ambient Music (Local Score Crossfader)
+**Technology:** Pygame mixer with local audio track pool
+
+The installation maintains a continuous ambient score by randomly selecting audio tracks from `static/score/` and crossfading between them every 4 cycles (3-second fade). This keeps the sonic environment alive without interrupting voice delivery. The music volume is set low (0.2) to sit beneath the speech layer.
+
+### How the Techniques Interact
 
 ```
 [USER CLICKS KNOCK]
         │
         ▼
-[WebSocket opens]
+[WebSocket opens — FastAPI]
         │
         ▼
-[CYCLE START: Voice ID Selection]
+[CYCLE START: Voice selected round-robin]
         │
-        ├─► GROQ CASCADE — Psychological Memory Gen
-        │       └─ Logic: Tries 8B-Instant first (High Quota) -> Falls back to 70B/Scout.
-        │       └─ Returns: Memory JSON (Spoken_aloud, image_prompt, triggers).
+        ├─► LLM CASCADE (Groq)
+        │       └─ System prompt + character history → JSON memory object
+        │       └─ Cascade: 70B Versatile → 8B Instant → LLaMA 4 Scout
         │
-        ├─► HISTORIAN LAYER — Parallel Generation
-        │       └─ Injects a real historical anchor/fact into each cycle.
+        ├─► HISTORIAN LAYER (Groq, parallel)
+        │       └─ Draws 1 unused historical anchor per voice from 32-fact pool
+        │       └─ LLM anchors the fictional memory to a documented 1973 event
         │
-        ├─► CONCURRENT MEDIA PIPELINE (Non-Blocking)
-        │       ├─► Voice: Groq Orpheus API (Falls back to Edge-TTS instantly).
-        │       ├─► Image: Pollinations Diffusion (Authenticated 60s timeout).
-        │       └─► Music: Pollinations Audio (Environment Ambient).
+        ├─► CONCURRENT MEDIA PIPELINE (non-blocking asyncio.create_task)
+        │       ├─► TTS: Groq Orpheus → Edge-TTS fallback → WAV/MP3 to disk
+        │       ├─► Image: Pollinations Diffusion → fallback.png → WebSocket push
+        │       └─► Music: Pygame crossfader (fires every 4 cycles)
         │
-        ├─► FAIL-SAFE: If image/music engine timeouts reach 60s:
-        │       └─ Activates "Lost Signal" static image (static/fallback.png).
+        ├─► WEBSOCKET PUSH → Frontend updates text, image, annotation in real time
         │
-        └─► [22s Observation Pause] ──► [Next Cycle: The Synthesis]
+        ├─► [Audio duration calculated] → [Sleep until voice completes + 3s]
+        │
+        └─► Every 4 cycles: SYNTHESIS LAYER (Groq)
+                └─ All four spoken_aloud fields → poet-historian meditation
+                └─ 14-second display pause before next round begins
 ```
 
 ---
 
-## Installation & Setup
+## Project Structure
 
-### 1. Requirements
+```
+Knock-AI-Project/
+├── app.py              # FastAPI backend — all LLM, TTS, image, audio logic
+├── index.html          # Frontend — WebSocket client, documentary UI
+├── requirements.txt    # Python dependencies
+├── .env example        # API key template
+├── .gitignore
+├── static/
+│   ├── current_memory.png    # Generated image (overwritten each cycle)
+│   ├── fallback.png          # 16mm "Lost Signal" frame (fail-safe)
+│   ├── voice.wav / voice.mp3 # Generated speech (overwritten each cycle)
+│   ├── assets/               # Static UI assets
+│   └── score/                # Local ambient audio tracks (add your own)
+```
+
+---
+
+## Requirements
+
+- Python 3.10+
+- A **Groq API key** (free tier works — the cascade handles rate limits automatically)
+- A **Hugging Face API token** (used by `InferenceClient` initialization)
+- Audio files (`.mp3`, `.wav`, or `.ogg`) placed in `static/score/` for ambient music
+- A `static/fallback.png` image for the fail-safe display
+
+---
+
+## Setup & Installation
+
+### Step 1 — Clone the repository
 
 ```bash
-pip install fastapi uvicorn groq edge-tts pygame pillow requests python-dotenv gradio_client
+git clone https://github.com/ArdaDemirr/Knock-AI-Project.git
+cd Knock-AI-Project
 ```
 
-### 2. Environment (`.env`)
+### Step 2 — Install dependencies
 
-```ini
-GROQ_API_KEY=your_key_here
-HF_API_TOKEN=your_token_here
+```bash
+pip install -r requirements.txt
 ```
 
-### 3. Run
+Or manually:
+
+```bash
+pip install fastapi uvicorn groq edge-tts pygame pillow requests python-dotenv huggingface_hub
+```
+
+### Step 3 — Configure your API keys
+
+Copy the example env file and fill in your keys:
+
+```bash
+cp ".env example" .env
+```
+
+Open `.env` and add:
+
+```env
+GROQ_API_KEY=your_groq_api_key_here
+HF_API_TOKEN=your_huggingface_token_here
+```
+
+- Get a free Groq key at [console.groq.com](https://console.groq.com)
+- Get a Hugging Face token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
+
+### Step 4 — Add ambient audio (optional but recommended)
+
+Place one or more audio files (`.mp3`, `.wav`, `.ogg`) into `static/score/`. The installation crossfades between them automatically. Atmospheric, drone, or acoustic guitar tracks work best thematically.
+
+### Step 5 — Run the installation
 
 ```bash
 python app.py
 ```
 
+The server starts on `http://127.0.0.1:8000`. Open that address in your browser.
+
+### Step 6 — Experience the installation
+
+Click **KNOCK** on the screen. A WebSocket connection opens and the installation begins cycling through the four voices. Each cycle:
+
+1. The LLM generates a new psychological memory for the current voice
+2. The text appears on screen with a historical annotation
+3. A period-appropriate image develops (Polaroid reveal effect)
+4. The voice speaks the memory aloud via neural TTS
+5. After 4 voices, a synthesis meditation appears for 14 seconds
+6. The cycle continues indefinitely — each session is unique
+
+To stop, close the browser tab or kill the server (`Ctrl+C`).
+
 ---
 
-## Key Features
+## Historical Grounding
 
-- **Decoupled Processing:** Speech, images, and ambient audio are generated concurrently in the background so the installation never halts.
-- **Dynamic Pacing:** The system calculates the exact mathematical length of generated speech to prevent overlapping voices.
-- **Fail-safe Visuals:** If the cloud image engines are under heavy load, the installation displays a grainy 16mm "Lost Signal" frame to maintain thematic continuity.
-- **Thematic Synthesis:** Every 4 cycles, the AI historian synthesizes the four individual voices into a single historical meditation.
+The installation does not treat 1973 as backdrop — it treats it as structural material. Every voice draws from a dedicated pool of 8 documented historical anchors, rotated randomly without repetition:
+
+- The Veteran's pool includes the 1969 draft lottery mechanics, the March 29 troop withdrawal, Operation Dewey Canyon III, and the VA's 1973 PTSD statistics
+- The Idealist's pool includes the May Day 1971 mass arrests, Nixon's 49-state landslide, Kent State, and COINTELPRO
+- The Subject's pool includes the Newport 1965 electric controversy, the Basement Tapes, Woody Guthrie's death, and Dylan's 2016 Nobel lecture
+- The Silent's pool includes the casualty notification procedure, Gold Star Mothers, the folded flag ceremony, and the 1982 Vietnam Memorial
+
+These anchors are injected into every LLM cycle and shaped by a second model call into a single documented fact that appears on screen as an annotation — separating historical record from fictional memory throughout the experience.
 
 ---
 
-## Installation Credits
+## Technical Stack Summary
 
-Project updated for **Resilient Creative AI Design (2026)**.  
-Featuring **Groq LLaMA** for real-time documentary-style intelligence.  
-_All prompts and architectural choices are designed for zero-latency, high-availability guerrilla installations._
+| Component | Technology |
+|---|---|
+| Backend framework | FastAPI + Uvicorn |
+| Real-time communication | WebSockets |
+| LLM inference | Groq API (LLaMA 3.3 70B / 3.1 8B / 4 Scout) |
+| TTS synthesis | Groq Orpheus v1 → Edge-TTS (neural fallback) |
+| Image generation | Pollinations AI (Stable Diffusion) → static fallback |
+| Audio playback | Pygame mixer (crossfade, volume control) |
+| Image processing | Pillow (PIL) |
+| Concurrency | Python asyncio + asyncio.create_task |
+| Frontend | Vanilla HTML/CSS/JS — WebSocket client |
+| Environment management | python-dotenv |
+
+
+## Credits
+
+Built for **CSE 358 Introduction to Artificial Intelligence** — Spring 2025–2026.
+Inspired by Bob Dylan's *Knockin' on Heaven's Door* (1973), written for Sam Peckinpah's *Pat Garrett and Billy the Kid*.
+Featuring Groq LLaMA for real-time documentary intelligence.
