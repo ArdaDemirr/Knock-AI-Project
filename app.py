@@ -7,7 +7,6 @@ import io
 import urllib.parse
 import random
 import shutil
-import glob
 import edge_tts
 import pygame
 from PIL import Image
