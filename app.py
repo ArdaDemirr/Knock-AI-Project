@@ -496,6 +496,10 @@ async def run_installation_loop(websocket):
         if len(voice_histories[vid]) > 10:
             voice_histories[vid] = voice_histories[vid][-10:]
 
+        if isinstance(result, dict) and len(result) == 1 and isinstance(list(result.values())[0], dict):
+            # Model sometimes wraps the entire JSON in a single parent key like {"response": {...}}
+            result = list(result.values())[0]
+
         spoken = "..."
         if isinstance(result, dict):
             spoken = result.get("spoken_aloud") or result.get("text") or result.get("spoken") or "..."
@@ -511,23 +515,32 @@ async def run_installation_loop(websocket):
         await asyncio.sleep(1.5)
         hist_fact = generate_historical_fact(vid, spoken, anchor)
 
+        def get_fallback_text(d, key1, key2=""):
+            if not isinstance(d, dict): return "..."
+            val = d.get(key1) or (d.get(key2) if key2 else "")
+            if val and isinstance(val, str) and len(val) > 2: return val
+            for k, v in d.items():
+                if isinstance(v, str) and len(v) > 15 and k not in ["spoken_aloud", "image_prompt", "music_prompt", "fact", "synthesis"]:
+                    return v
+            return "..."
+
         memory_map = {
-            "soldier":   result.get("the_memory", ""),
-            "protester": result.get("the_political_thought", ""),
-            "dylan":     result.get("why_he_wrote_it", ""),
-            "mother":    result.get("the_ordinary_memory", ""),
+            "soldier":   get_fallback_text(result, "the_memory"),
+            "protester": get_fallback_text(result, "the_political_thought"),
+            "dylan":     get_fallback_text(result, "why_he_wrote_it"),
+            "mother":    get_fallback_text(result, "the_ordinary_memory"),
         }
         trigger_map = {
-            "soldier":   result.get("what_dylan_line_hit_him", ""),
-            "protester": result.get("what_the_movement_got_wrong", ""),
-            "dylan":     result.get("vietnam_oblique", ""),
-            "mother":    result.get("the_flag", ""),
+            "soldier":   get_fallback_text(result, "what_dylan_line_hit_him"),
+            "protester": get_fallback_text(result, "what_the_movement_got_wrong"),
+            "dylan":     get_fallback_text(result, "vietnam_oblique"),
+            "mother":    get_fallback_text(result, "the_flag"),
         }
         secondary_map = {
-            "soldier":   result.get("the_question", ""),
-            "protester": result.get("the_dylan_complication", ""),
-            "dylan":     result.get("fear_about_the_song", ""),
-            "mother":    result.get("what_she_wants_to_ask_god", ""),
+            "soldier":   get_fallback_text(result, "the_question"),
+            "protester": get_fallback_text(result, "the_dylan_complication"),
+            "dylan":     get_fallback_text(result, "fear_about_the_song"),
+            "mother":    get_fallback_text(result, "what_she_wants_to_ask_god"),
         }
 
         await websocket.send_json({

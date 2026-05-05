@@ -958,7 +958,7 @@
         let i = 0;
         const interval = 1000 / charsPerSecond;
 
-        typewriterTimer = setInterval(() => {
+        const typeChar = () => {
           if (i < text.length) {
             el.textContent += text[i];
             i++;
@@ -966,14 +966,16 @@
             if (text[i - 1] === "." && text[i] === "." && text[i + 1] === ".") {
               clearInterval(typewriterTimer);
               setTimeout(() => {
-                typewriterTimer = setInterval(arguments.callee, interval);
+                typewriterTimer = setInterval(typeChar, interval);
               }, 600);
             }
           } else {
             clearInterval(typewriterTimer);
             el.classList.remove("typewriter");
           }
-        }, interval);
+        };
+
+        typewriterTimer = setInterval(typeChar, interval);
       }
 
       // KNOCK button
