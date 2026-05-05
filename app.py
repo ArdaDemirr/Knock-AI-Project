@@ -496,7 +496,15 @@ async def run_installation_loop(websocket):
         if len(voice_histories[vid]) > 10:
             voice_histories[vid] = voice_histories[vid][-10:]
 
-        spoken = result.get("spoken_aloud", "...")
+        spoken = "..."
+        if isinstance(result, dict):
+            spoken = result.get("spoken_aloud") or result.get("text") or result.get("spoken") or "..."
+        
+        import re
+        if not isinstance(spoken, str) or not re.search('[a-zA-Z0-9]', spoken):
+            spoken = "I don't have the words..."
+            if isinstance(result, dict):
+                result["spoken_aloud"] = spoken
         round_memories[vid] = result
 
         # Stagger historical fact call to avoid Groq rate limit collision
@@ -646,10 +654,16 @@ async def run_installation_loop(websocket):
 # ROUTES
 # ============================================================
 
+@app.head("/")
 @app.get("/")
 async def get_ui():
     with open("index.html", "r", encoding="utf-8") as f:
         return HTMLResponse(f.read())
+
+@app.head("/health")
+@app.get("/health")
+async def health_check():
+    return {"status": "ok"}
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
