@@ -5,6 +5,8 @@
 
 **Creative AI Installation · CSE 358 Introduction to Artificial Intelligence**
 
+Drive video link: https://drive.google.com/file/d/1EonT1FTQWVOQlKEfLgRcJ3-Clzn8-BA-/view?usp=drive_link
+
 KNOCK is a living-memory documentary installation. It places four distinct American consciousnesses — a Vietnam veteran, a burned-out Berkeley protester, Bob Dylan himself, and a Gold Star mother — in the same October 1973 moment, all hearing *Knockin' on Heaven's Door* for the first time. The installation cycles through each voice continuously, generating psychological memories, synthesized visuals, neural speech, and ambient audio in real time. Every session is unique. No two knocks are the same.
 
 ---
