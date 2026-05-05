@@ -760,7 +760,9 @@
     </div>
 
     <script>
-      const ws = new WebSocket("ws://127.0.0.1:8000/ws");
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const wsUrl = `${protocol}//${window.location.host}/ws`;
+      const ws = new WebSocket(wsUrl);
       let currentCycle = 0;
       let currentVoiceId = "soldier";
       let typewriterTimer = null;
@@ -850,6 +852,38 @@
               .getElementById("spoken-container")
               .classList.add("visible");
           }, 400);
+        }
+
+        if (data.action === "play_score") {
+          if (window.currentScoreAudio) {
+            let oldAudio = window.currentScoreAudio;
+            let fadeOut = setInterval(() => {
+              if (oldAudio.volume > 0.01) {
+                oldAudio.volume -= 0.01;
+              } else {
+                oldAudio.pause();
+                clearInterval(fadeOut);
+              }
+            }, 300);
+          }
+          let newAudio = new Audio(data.url);
+          newAudio.loop = true;
+          newAudio.volume = 0;
+          newAudio.play().catch(e => console.log("Score play error", e));
+          window.currentScoreAudio = newAudio;
+          
+          let fadeIn = setInterval(() => {
+            if (newAudio.volume < 0.05) {
+              newAudio.volume += 0.01;
+            } else {
+              clearInterval(fadeIn);
+            }
+          }, 500);
+        }
+
+        if (data.action === "play_voice") {
+          let voiceAudio = new Audio(data.url);
+          voiceAudio.play().catch(e => console.log("Voice play error", e));
         }
 
         if (data.action === "develop_polaroid") {

@@ -8,7 +8,6 @@ import urllib.parse
 import random
 import shutil
 import edge_tts
-import pygame
 from PIL import Image
 from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket
@@ -31,7 +30,6 @@ hf_client = InferenceClient(token=HF_API_TOKEN)
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
-pygame.mixer.init(frequency=44100)
 
 os.makedirs("static", exist_ok=True)
 os.makedirs("static/assets", exist_ok=True)
@@ -547,28 +545,24 @@ async def run_installation_loop(websocket):
         if cycle % 4 == 0:
             async def crossfade_local_track():
                 score_folder = "static/score"
-                tracks = [f for f in os.listdir(score_folder) if f.endswith(('.mp3', '.wav', '.ogg'))]
-                
-                if not tracks:
-                    print("   ! [Audio] No local tracks found in static/score/. Playing silence.")
-                    return
-                
-                # Pick a random track 
-                selected_track = random.choice(tracks)
-                track_path = os.path.join(score_folder, selected_track)
-                
-                print(f"   -> [Audio] Randomly selected local track: {selected_track}. Crossfading...")
-                
-                if pygame.mixer.music.get_busy():
-                    pygame.mixer.music.fadeout(3000)
-                    await asyncio.sleep(3.5) # Wait for fade to complete
-                    
                 try:
-                    pygame.mixer.music.load(track_path)
-                    pygame.mixer.music.set_volume(0.2) 
-                    pygame.mixer.music.play(loops=-1, fade_ms=3000)
+                    tracks = [f for f in os.listdir(score_folder) if f.endswith(('.mp3', '.wav', '.ogg'))]
+                    
+                    if not tracks:
+                        print("   ! [Audio] No local tracks found in static/score/. Playing silence.")
+                        return
+                    
+                    # Pick a random track 
+                    selected_track = random.choice(tracks)
+                    
+                    print(f"   -> [Audio] Randomly selected local track: {selected_track}. Crossfading via frontend...")
+                    
+                    await websocket.send_json({
+                        "action": "play_score",
+                        "url": f"/static/score/{selected_track}"
+                    })
                 except Exception as e:
-                    print(f"   ! [Audio] Pygame failed to play local file: {e}")
+                    print(f"   ! [Audio] Failed to handle local score: {e}")
 
             # Fire music swap in the background so it doesn't pause the loop
             asyncio.create_task(crossfade_local_track())
@@ -616,13 +610,20 @@ async def run_installation_loop(websocket):
 
             if audio_file and os.path.exists(audio_file):
                 try:
-                    sfx = pygame.mixer.Sound(audio_file)
-                    sfx.play()
-                    played_dur = sfx.get_length()
-                    if played_dur > 1.0:
-                        duration = played_dur
+                    if audio_file.endswith('.wav'):
+                        import wave
+                        with wave.open(audio_file, 'r') as f:
+                            frames = f.getnframes()
+                            rate = f.getframerate()
+                            duration = frames / float(rate)
                 except Exception as e:
-                    print(f"      [Audio] Pygame playback error: {e}")
+                    print(f"      [Audio] Could not get WAV duration, using fallback: {e}")
+                
+                ts = int(time.time())
+                await websocket.send_json({
+                    "action": "play_voice",
+                    "url": f"/{audio_file}?t={ts}"
+                })
             return duration
 
         audio_duration = await fetch_and_play_voice()
@@ -663,4 +664,5 @@ async def websocket_endpoint(websocket: WebSocket):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    port = int(os.environ.get("PORT", 8080))
+    uvicorn.run(app, host="0.0.0.0", port=port)
